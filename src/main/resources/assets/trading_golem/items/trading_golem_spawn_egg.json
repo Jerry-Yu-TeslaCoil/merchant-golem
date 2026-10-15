@@ -1,0 +1,6 @@
+{
+	"model": {
+		"type": "minecraft:model",
+		"model": "trading_golem:item/trading_golem_spawn_egg"
+	}
+}
