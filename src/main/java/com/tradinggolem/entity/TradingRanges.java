@@ -1,16 +1,24 @@
 package com.tradinggolem.entity;
 
 /**
- * Distances are chosen for a villager trading hall, where each villager is locked in a one-block cell.
- * The golem trades from the aisle. It does not need to stand against the villager.
+ * Distances for a villager trading hall. Each villager sits in a one-block cell:
+ * blocks around the feet, and an opening in front of the face. The golem trades
+ * from the aisle, through that opening, the way a player clicks the face.
  */
 public final class TradingRanges {
-	/** Horizontal reach, in blocks. Farther than one block, short of trading through a whole building. */
-	public static final double TRADE_HORIZONTAL = 3.0;
-	/** Villagers standing on a slab, carpet stack, or one block up are still in reach. */
-	public static final double TRADE_VERTICAL = 2.0;
+	/** Eye height used to judge reach, matching a player standing where the golem stands. */
+	public static final double EYE_HEIGHT = 1.62;
+	/** How close a free villager's hitbox must be, measured from that eye height. */
+	public static final double FREE_REACH = 3.5;
+	/**
+	 * How close the face opening must be. Long enough to cover the aisle in front of a cell,
+	 * including a counter, a slab, and a path that stops a block short.
+	 */
+	public static final double WINDOW_REACH = 5.0;
 	/** How far the golem will walk to find a buyer, measured from itself. */
 	public static final double VILLAGER_SEARCH = 48.0;
+	/** Trading halls stack rows. Search well above and below the aisle. */
+	public static final double VILLAGER_SEARCH_VERTICAL = 16.0;
 	/** Horizontal distance at which the golem may take from or fill its chest. */
 	public static final double CHEST_HORIZONTAL = 2.0;
 	public static final double CHEST_VERTICAL = 2.5;
@@ -21,9 +29,5 @@ public final class TradingRanges {
 	public static final int TRADE_PAUSE_TICKS = 8;
 
 	private TradingRanges() {
-	}
-
-	public static boolean inTradeRange(double dx, double dy, double dz) {
-		return dx * dx + dz * dz <= TRADE_HORIZONTAL * TRADE_HORIZONTAL && Math.abs(dy) <= TRADE_VERTICAL;
 	}
 }

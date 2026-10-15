@@ -1,14 +1,12 @@
 package com.tradinggolem.entity;
 
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.Container;
-import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.entity.npc.villager.Villager;
 import net.minecraft.world.item.ItemStack;
@@ -30,15 +28,17 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Pulls a non-emerald stack from the home chest, walks to a villager who is buying it,
- * and sells from the aisle. Caged villagers are traded with as soon as they are inside
- * {@link TradingRanges#TRADE_HORIZONTAL} blocks; the golem never tries to enter the cell.
+ * Pulls a non-emerald stack from the home chest, walks the aisle in front of a villager's
+ * face, and sells through that opening. It does not step into the cell.
  */
 public final class TradingGolemWorkGoal extends Goal {
 	private final TradingGolem golem;
 	private final Set<UUID> skippedVillagers = new HashSet<>();
 	@Nullable
 	private UUID walkingTo;
+	@Nullable
+	private UUID approachVillager;
+	private int standAttempt;
 	private int stuckTicks;
 	private int tradePause;
 	private int chestHoldTicks;
@@ -242,6 +242,8 @@ public final class TradingGolemWorkGoal extends Goal {
 			this.golem.scanCursor = index + 1;
 			this.skippedVillagers.clear();
 			this.walkingTo = null;
+			this.approachVillager = null;
+			this.standAttempt = 0;
 			this.stuckTicks = 0;
 			this.tradePause = 0;
 			this.chestHoldTicks = 12;
@@ -252,18 +254,23 @@ public final class TradingGolemWorkGoal extends Goal {
 
 	private void sellCarried(ServerLevel level) {
 		this.golem.closeChest();
-		Villager buyer = this.findBuyer(level);
-		if (buyer == null) {
+		List<Villager> buyers = this.findBuyers(level);
+		if (buyers.isEmpty()) {
 			if (!this.golem.failedItems.contains(itemKey(this.golem.carried))) {
 				this.golem.failedItems.add(itemKey(this.golem.carried));
 				level.playSound(null, this.golem.blockPosition(), SoundEvents.VILLAGER_NO, SoundSource.NEUTRAL, 0.7F, 1.15F);
 			}
 			this.walkingTo = null;
+			this.approachVillager = null;
+			this.standAttempt = 0;
 			return;
 		}
 
-		this.golem.getLookControl().setLookAt(buyer, 30.0F, 30.0F);
-		if (inTradeRange(this.golem, buyer)) {
+		for (Villager buyer : buyers) {
+			if (!VillagerWindow.canTrade(level, buyer, this.golem.getX(), this.golem.getY(), this.golem.getZ())) {
+				continue;
+			}
+			this.golem.getLookControl().setLookAt(buyer, 30.0F, 30.0F);
 			this.golem.getNavigation().stop();
 			this.walkingTo = null;
 			this.stuckTicks = 0;
@@ -273,35 +280,51 @@ public final class TradingGolemWorkGoal extends Goal {
 			}
 			if (this.executeTrade(level, buyer)) {
 				this.tradePause = TradingRanges.TRADE_PAUSE_TICKS;
+				this.standAttempt = 0;
 			} else {
 				this.skippedVillagers.add(buyer.getUUID());
 			}
 			return;
 		}
 
-		this.approach(level, buyer);
+		this.approach(level, buyers.getFirst());
 	}
 
 	private void approach(ServerLevel level, Villager buyer) {
-		if (buyer.getUUID().equals(this.walkingTo) && this.golem.tickCount % 20 != 0 && !this.golem.getNavigation().isDone()) {
+		if (this.approachVillager == null || !this.approachVillager.equals(buyer.getUUID())) {
+			this.approachVillager = buyer.getUUID();
+			this.walkingTo = null;
+			this.standAttempt = 0;
+			this.stuckTicks = 0;
+		}
+		if (buyer.getUUID().equals(this.walkingTo) && this.golem.getNavigation().isDone()) {
+			this.standAttempt++;
+			this.walkingTo = null;
+			this.stuckTicks = 0;
+		}
+		if (buyer.getUUID().equals(this.walkingTo) && this.golem.tickCount % 15 != 0 && !this.golem.getNavigation().isDone()) {
 			this.stuckTicks = this.golem.getNavigation().isStuck() ? this.stuckTicks + 1 : 0;
-			if (this.stuckTicks > 60) {
-				this.skippedVillagers.add(buyer.getUUID());
+			if (this.stuckTicks > 50) {
+				this.standAttempt++;
 				this.walkingTo = null;
 				this.stuckTicks = 0;
+				this.golem.getNavigation().stop();
 			}
 			return;
 		}
 
-		BlockPos stand = this.findStand(level, buyer);
-		if (stand == null) {
+		List<BlockPos> stands = VillagerWindow.stands(level, buyer, this.golem);
+		if (stands.isEmpty() || this.standAttempt >= stands.size()) {
 			this.skippedVillagers.add(buyer.getUUID());
 			this.walkingTo = null;
+			this.approachVillager = null;
+			this.standAttempt = 0;
 			return;
 		}
+		BlockPos stand = stands.get(this.standAttempt);
 		boolean started = this.golem.getNavigation().moveTo(stand.getX() + 0.5, stand.getY(), stand.getZ() + 0.5, 1.05);
 		if (!started) {
-			this.skippedVillagers.add(buyer.getUUID());
+			this.standAttempt++;
 			this.walkingTo = null;
 			return;
 		}
@@ -309,13 +332,16 @@ public final class TradingGolemWorkGoal extends Goal {
 		this.stuckTicks = 0;
 	}
 
-	@Nullable
-	private Villager findBuyer(ServerLevel level) {
-		AABB area = this.golem.getBoundingBox().inflate(TradingRanges.VILLAGER_SEARCH, 8.0, TradingRanges.VILLAGER_SEARCH);
+	private List<Villager> findBuyers(ServerLevel level) {
+		AABB area = this.golem.getBoundingBox().inflate(
+				TradingRanges.VILLAGER_SEARCH,
+				TradingRanges.VILLAGER_SEARCH_VERTICAL,
+				TradingRanges.VILLAGER_SEARCH
+		);
 		Container chest = ChestStash.get(level, this.golem.chestPos);
 		List<Villager> villagers = level.getEntitiesOfClass(Villager.class, area, villager -> this.canConsider(villager, chest));
 		villagers.sort(Comparator.comparingDouble(this.golem::distanceToSqr));
-		return villagers.isEmpty() ? null : villagers.getFirst();
+		return villagers;
 	}
 
 	private boolean canConsider(Villager villager, @Nullable Container chest) {
@@ -440,47 +466,6 @@ public final class TradingGolemWorkGoal extends Goal {
 		this.golem.rewards.add(stack);
 	}
 
-	@Nullable
-	private BlockPos findStand(Level level, Villager villager) {
-		BlockPos origin = villager.blockPosition();
-		BlockPos best = null;
-		double bestDistance = Double.MAX_VALUE;
-		for (int dx = -3; dx <= 3; dx++) {
-			for (int dy = -2; dy <= 2; dy++) {
-				for (int dz = -3; dz <= 3; dz++) {
-					if (dx == 0 && dz == 0) {
-						continue;
-					}
-					double horizontal = Math.sqrt(dx * dx + dz * dz);
-					if (horizontal < 1.0 || horizontal > TradingRanges.TRADE_HORIZONTAL) {
-						continue;
-					}
-					BlockPos feet = origin.offset(dx, dy, dz);
-					if (!this.isStandable(level, feet)) {
-						continue;
-					}
-					double distance = this.golem.distanceToSqr(feet.getX() + 0.5, feet.getY(), feet.getZ() + 0.5);
-					if (distance < bestDistance) {
-						bestDistance = distance;
-						best = feet;
-					}
-				}
-			}
-		}
-		return best;
-	}
-
-	private boolean isStandable(Level level, BlockPos feet) {
-		if (!level.getBlockState(feet).getCollisionShape(level, feet).isEmpty()) {
-			return false;
-		}
-		if (!level.getBlockState(feet.above()).getCollisionShape(level, feet.above()).isEmpty()) {
-			return false;
-		}
-		BlockState below = level.getBlockState(feet.below());
-		return below.isFaceSturdy(level, feet.below(), Direction.UP);
-	}
-
 	private void walkToChest() {
 		BlockPos pos = this.golem.chestPos;
 		if (pos == null) {
@@ -494,16 +479,12 @@ public final class TradingGolemWorkGoal extends Goal {
 		double x = above.getX() + 0.5;
 		double y = above.getY();
 		double z = above.getZ() + 0.5;
-		if (!this.isStandable(this.golem.level(), above)) {
+		if (!VillagerWindow.isStandable(this.golem.level(), above)) {
 			x = pos.getX() + 0.5;
 			y = pos.getY();
 			z = pos.getZ() + 0.5;
 		}
 		this.golem.getNavigation().moveTo(x, y, z, 1.0);
-	}
-
-	private static boolean inTradeRange(Entity golem, Entity villager) {
-		return TradingRanges.inTradeRange(golem.getX() - villager.getX(), golem.getY() - villager.getY(), golem.getZ() - villager.getZ());
 	}
 
 	static String itemKey(ItemStack stack) {

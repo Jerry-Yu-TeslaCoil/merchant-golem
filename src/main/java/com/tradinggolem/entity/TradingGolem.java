@@ -8,16 +8,21 @@ import net.minecraft.sounds.SoundEvents;
 import net.minecraft.world.Container;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.ContainerUser;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.ai.goal.FloatGoal;
+import net.minecraft.world.entity.ai.navigation.GroundPathNavigation;
+import net.minecraft.world.entity.ai.navigation.PathNavigation;
 import net.minecraft.world.entity.animal.golem.AbstractGolem;
 import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.entity.npc.villager.Villager;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.pathfinder.PathType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.storage.ValueInput;
 import net.minecraft.world.level.storage.ValueOutput;
@@ -47,6 +52,25 @@ public class TradingGolem extends AbstractGolem implements ContainerUser {
 	public TradingGolem(EntityType<? extends TradingGolem> type, Level level) {
 		super(type, level);
 		this.setPersistenceRequired();
+		this.setPathfindingMalus(PathType.DOOR_OPEN, 0.0F);
+		this.setPathfindingMalus(PathType.WALKABLE_DOOR, 0.0F);
+	}
+
+	@Override
+	protected PathNavigation createNavigation(Level level) {
+		GroundPathNavigation navigation = new GroundPathNavigation(this, level);
+		navigation.setCanOpenDoors(true);
+		navigation.setCanFloat(true);
+		return navigation;
+	}
+
+	/** Brushing the trade window must not shove a locked villager out of the cell. */
+	@Override
+	public void push(Entity entity) {
+		if (entity instanceof Villager) {
+			return;
+		}
+		super.push(entity);
 	}
 
 	public static AttributeSupplier.Builder createAttributes() {
