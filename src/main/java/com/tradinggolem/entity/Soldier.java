@@ -5,8 +5,10 @@ import com.tradinggolem.block.SoldierChestBlock;
 import com.tradinggolem.block.SoldierChestBlockEntity;
 import com.tradinggolem.menu.SoldierMenu;
 import com.tradinggolem.villager.ModVillagers;
+import com.tradinggolem.villager.VillagerFoodAccess;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
@@ -20,6 +22,7 @@ import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.ConversionParams;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.item.ItemEntity;
@@ -28,7 +31,10 @@ import net.minecraft.world.entity.npc.villager.VillagerData;
 import net.minecraft.world.entity.npc.villager.VillagerProfession;
 import net.minecraft.world.entity.npc.villager.VillagerType;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.food.FoodProperties;
+import net.minecraft.world.food.VillagerFood;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.component.Consumable;
 import net.minecraft.world.item.trading.MerchantOffers;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.storage.ValueInput;
@@ -57,6 +63,9 @@ public class Soldier extends Villager implements net.minecraft.world.entity.Cont
 	@Nullable
 	private BlockPos openedChestPos;
 	private int alertHold;
+	/** A villager is hungry while this is below 12. */
+	private static final int FOOD_FULL = 12;
+	private int eatDelay;
 
 	public Soldier(EntityType<? extends Soldier> type, Level level) {
 		super(type, level);
@@ -97,6 +106,51 @@ public class Soldier extends Villager implements net.minecraft.world.entity.Cont
 			this.alertHold = 40;
 		} else if (this.alertHold > 0) {
 			this.alertHold--;
+		}
+		this.eat();
+	}
+
+	/**
+	 * Eat one carried food item when hungry or hurt. Villagers have a food level, not a player hunger bar.
+	 * Eating fills that level and restores health by the food's nutrition.
+	 */
+	private void eat() {
+		if (this.eatDelay > 0) {
+			this.eatDelay--;
+			return;
+		}
+		VillagerFoodAccess food = (VillagerFoodAccess) this;
+		boolean hungry = food.tradingGolem$getFoodLevel() < FOOD_FULL;
+		boolean hurt = this.getHealth() < this.getMaxHealth();
+		if (!hungry && !hurt) {
+			return;
+		}
+		SimpleContainer inventory = this.getInventory();
+		for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
+			ItemStack stack = inventory.getItem(slot);
+			FoodProperties meal = stack.get(DataComponents.FOOD);
+			if (meal == null || meal.nutrition() <= 0) {
+				continue;
+			}
+			if (hungry) {
+				VillagerFood villagerFood = stack.get(DataComponents.VILLAGER_FOOD);
+				int points = villagerFood != null ? villagerFood.nutrition() : meal.nutrition();
+				food.tradingGolem$setFoodLevel(food.tradingGolem$getFoodLevel() + points);
+			}
+			if (hurt) {
+				this.heal(meal.nutrition());
+			}
+			Consumable consumable = stack.get(DataComponents.CONSUMABLE);
+			if (consumable != null) {
+				consumable.onConsume(this.level(), this, stack);
+			} else {
+				stack.shrink(1);
+			}
+			if (stack.isEmpty()) {
+				inventory.setItem(slot, ItemStack.EMPTY);
+			}
+			this.eatDelay = 32;
+			return;
 		}
 	}
 
@@ -239,6 +293,16 @@ public class Soldier extends Villager implements net.minecraft.world.entity.Cont
 			this.unlink(level);
 		}
 		super.die(source);
+	}
+
+	@Override
+	public <T extends net.minecraft.world.entity.Mob> T convertTo(EntityType<T> type, ConversionParams params, ConversionParams.AfterConversion<T> after) {
+		return null;
+	}
+
+	@Override
+	public <T extends net.minecraft.world.entity.Mob> T convertTo(EntityType<T> type, ConversionParams params, EntitySpawnReason reason, ConversionParams.AfterConversion<T> after) {
+		return null;
 	}
 
 	@Override

@@ -45,6 +45,7 @@ public final class SoldierRestGoal extends Goal {
 	private int pause;
 	private int cooldown;
 	private int standAttempt;
+	private boolean fetchedEmeralds;
 	@Nullable
 	private UUID buyer;
 
@@ -77,6 +78,7 @@ public final class SoldierRestGoal extends Goal {
 		this.skipped.clear();
 		this.pause = 0;
 		this.standAttempt = 0;
+		this.fetchedEmeralds = false;
 	}
 
 	@Override
@@ -97,6 +99,9 @@ public final class SoldierRestGoal extends Goal {
 		if (container == null) {
 			return;
 		}
+		if (this.tendHorse(level, chest, container)) {
+			return;
+		}
 		if (this.needsTack(level, chest, container)) {
 			if (!this.near(chest)) {
 				this.walk(chest);
@@ -112,14 +117,13 @@ public final class SoldierRestGoal extends Goal {
 			return;
 		}
 		if (!this.sorted) {
-			if (!this.near(chest)) {
-				this.walk(chest);
-				return;
-			}
-			this.soldier.openChest(container, chest);
+			this.soldier.stopUsingItem();
 			this.soldier.getNavigation().stop();
 			this.balance(level, container);
-			this.equipHorse(level, chest, container);
+			if (this.near(chest)) {
+				this.soldier.openChest(container, chest);
+				this.equipHorse(level, chest, container);
+			}
 			this.sorted = true;
 			this.buyer = null;
 			this.standAttempt = 0;
@@ -141,12 +145,32 @@ public final class SoldierRestGoal extends Goal {
 			this.approach(level, villager);
 			return;
 		}
+		if (!this.carryingPayment(villager, container)) {
+			if (this.findOffer(level, villager, container) != null && !this.fetchedEmeralds) {
+				this.sorted = false;
+				this.fetchedEmeralds = true;
+				return;
+			}
+			if (this.findOffer(level, villager, container) == null) {
+				this.buyer = null;
+				this.fetchedEmeralds = false;
+				return;
+			}
+		}
+		this.fetchedEmeralds = false;
 		this.soldier.getNavigation().stop();
 		this.soldier.getLookControl().setLookAt(villager, 30.0F, 30.0F);
 		if (this.buy(level, villager, container)) {
-			this.sorted = false;
-			this.pause = 20;
-			this.buyer = null;
+			this.balance(level, container);
+			if (this.carryingPayment(villager, container)) {
+				this.pause = 20;
+			} else if (this.findOffer(level, villager, container) != null) {
+				this.sorted = false;
+				this.fetchedEmeralds = true;
+			} else {
+				this.buyer = null;
+				this.pause = 20;
+			}
 		} else {
 			this.skipped.add(villager.getUUID());
 			this.buyer = null;
@@ -191,14 +215,10 @@ public final class SoldierRestGoal extends Goal {
 	}
 
 	private void balance(ServerLevel level, Container chest) {
+		this.soldier.stopUsingItem();
 		this.dump(level, chest, this.soldier.getInventory());
 		for (EquipmentSlot slot : EquipmentSlot.values()) {
-			ItemStack stack = this.soldier.getItemBySlot(slot);
-			if (stack.isEmpty()) {
-				continue;
-			}
-			this.soldier.setItemSlot(slot, ItemStack.EMPTY);
-			this.keep(level, chest, stack);
+			this.stow(level, chest, this.soldier.getItemBySlot(slot), () -> this.soldier.setItemSlot(slot, ItemStack.EMPTY));
 		}
 		this.pull(level, chest, CampSite::edible, FOOD_ON_BODY);
 		this.pull(level, chest, stack -> stack.is(Items.EMERALD), EMERALDS_ON_BODY);
@@ -206,13 +226,19 @@ public final class SoldierRestGoal extends Goal {
 
 	private void dump(ServerLevel level, Container chest, SimpleContainer inventory) {
 		for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
-			ItemStack stack = inventory.getItem(slot);
-			if (stack.isEmpty()) {
-				continue;
-			}
-			inventory.setItem(slot, ItemStack.EMPTY);
-			this.keep(level, chest, stack);
+			int index = slot;
+			this.stow(level, chest, inventory.getItem(slot), () -> inventory.setItem(index, ItemStack.EMPTY));
 		}
+	}
+
+	/** Copy first so clearing the slot cannot empty the stack that is about to be stored. */
+	private void stow(ServerLevel level, Container chest, ItemStack stack, Runnable clear) {
+		if (stack.isEmpty()) {
+			return;
+		}
+		ItemStack kept = stack.copy();
+		clear.run();
+		this.keep(level, chest, kept);
 	}
 
 	private void keep(ServerLevel level, Container chest, ItemStack stack) {
@@ -251,6 +277,87 @@ public final class SoldierRestGoal extends Goal {
 				return;
 			}
 		}
+	}
+
+	private boolean tendHorse(ServerLevel level, BlockPos chestPos, Container chest) {
+		AbstractHorse horse = this.hitchedHorse(level, chestPos);
+		if (horse == null || horse.getHealth() >= horse.getMaxHealth()) {
+			return false;
+		}
+		Bite bite = this.bestBite(chest);
+		if (bite == null) {
+			return false;
+		}
+		if (this.soldier.distanceToSqr(horse) > 6.0) {
+			this.soldier.getNavigation().moveTo(horse.getX(), horse.getY(), horse.getZ(), 1.0);
+			return true;
+		}
+		ItemStack stack = bite.container().getItem(bite.slot());
+		stack.shrink(1);
+		bite.container().setItem(bite.slot(), stack.isEmpty() ? ItemStack.EMPTY : stack);
+		bite.container().setChanged();
+		horse.heal(bite.heal());
+		horse.setEating(true);
+		level.playSound(null, horse.blockPosition(), SoundEvents.HORSE_EAT, SoundSource.NEUTRAL, 1.0F, 1.0F);
+		this.soldier.getNavigation().stop();
+		this.pause = 20;
+		return true;
+	}
+
+	private boolean horseNeedsFodder(ServerLevel level, Container chest) {
+		if (this.soldier.chestPos() == null) {
+			return false;
+		}
+		AbstractHorse horse = this.hitchedHorse(level, this.soldier.chestPos());
+		if (horse == null || horse.getHealth() >= horse.getMaxHealth()) {
+			return false;
+		}
+		return !this.owned(level, chest, SoldierRestGoal::horseFodder);
+	}
+
+	/** Wheat, hay, apples, and sugar. Golden food stays in the chest. */
+	private static boolean horseFodder(ItemStack stack) {
+		return stack.is(ItemTags.HORSE_FOOD)
+			&& !stack.is(Items.GOLDEN_APPLE)
+			&& !stack.is(Items.ENCHANTED_GOLDEN_APPLE)
+			&& !stack.is(Items.GOLDEN_CARROT);
+	}
+
+	@Nullable
+	private Bite bestBite(Container chest) {
+		Bite best = this.bestBite(null, this.soldier.getInventory());
+		return this.bestBite(best, chest);
+	}
+
+	private Bite bestBite(@Nullable Bite best, Container container) {
+		for (int slot = 0; slot < container.getContainerSize(); slot++) {
+			ItemStack stack = container.getItem(slot);
+			if (!SoldierRestGoal.horseFodder(stack)) {
+				continue;
+			}
+			float heal = this.horseHeal(stack);
+			if (heal <= 0.0F || (best != null && heal <= best.heal())) {
+				continue;
+			}
+			best = new Bite(container, slot, heal);
+		}
+		return best;
+	}
+
+	private float horseHeal(ItemStack stack) {
+		if (stack.is(Items.HAY_BLOCK)) {
+			return 20.0F;
+		}
+		if (stack.is(Items.APPLE) || stack.is(Items.CARROT)) {
+			return 3.0F;
+		}
+		if (stack.is(Items.SUGAR)) {
+			return 1.0F;
+		}
+		return 2.0F;
+	}
+
+	private record Bite(Container container, int slot, float heal) {
 	}
 
 	private boolean needsTack(ServerLevel level, BlockPos chestPos, Container chest) {
@@ -323,6 +430,26 @@ public final class SoldierRestGoal extends Goal {
 	@Nullable
 	private Villager findAlive(ServerLevel level, UUID id) {
 		return level.getEntity(id) instanceof Villager villager && villager.isAlive() ? villager : null;
+	}
+
+	/** Emeralds and the second cost have to be on the soldier, not only in the chest. */
+	private boolean carryingPayment(Villager villager, Container chest) {
+		if (!(this.soldier.level() instanceof ServerLevel level)) {
+			return false;
+		}
+		MerchantOffer offer = this.findOffer(level, villager, chest);
+		if (offer == null) {
+			return false;
+		}
+		if (this.carried(stack -> stack.is(Items.EMERALD)) < offer.getCostA().getCount()) {
+			return false;
+		}
+		ItemStack costB = offer.getCostB();
+		return costB.isEmpty() || this.carried(stack -> ItemStack.isSameItemSameComponents(stack, costB)) >= costB.getCount();
+	}
+
+	private int carried(Predicate<ItemStack> test) {
+		return this.count(this.soldier.getInventory(), test);
 	}
 
 	@Nullable
@@ -417,6 +544,9 @@ public final class SoldierRestGoal extends Goal {
 		if (result.isEmpty()) {
 			return false;
 		}
+		if (this.horseNeedsFodder(level, chest) && SoldierRestGoal.horseFodder(result)) {
+			return true;
+		}
 		if (CampSite.edible(result)) {
 			return this.countAll(level, chest, CampSite::edible) < FOOD_ON_BODY;
 		}
@@ -431,9 +561,6 @@ public final class SoldierRestGoal extends Goal {
 		}
 		if (result.is(Items.BOW)) {
 			return this.better(result, this.best(level, chest, stack -> stack.is(Items.BOW)));
-		}
-		if (result.is(Items.CROSSBOW)) {
-			return this.better(result, this.best(level, chest, stack -> stack.is(Items.CROSSBOW)));
 		}
 		if (this.melee(result)) {
 			return this.better(result, this.best(level, chest, this::melee));

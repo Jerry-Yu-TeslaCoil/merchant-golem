@@ -6,8 +6,8 @@ import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.world.Container;
 import net.minecraft.world.InteractionHand;
@@ -24,10 +24,13 @@ import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.entity.projectile.ProjectileUtil;
 import net.minecraft.world.entity.projectile.arrow.AbstractArrow;
+import net.minecraft.world.entity.npc.villager.Villager;
 import net.minecraft.world.item.BowItem;
-import net.minecraft.world.item.CrossbowItem;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.trading.MerchantOffer;
+import net.minecraft.world.item.trading.MerchantOffers;
 import net.minecraft.world.item.component.SwingAnimation;
 import net.minecraft.world.item.enchantment.ItemEnchantments;
 import net.minecraft.world.item.equipment.Equippable;
@@ -65,6 +68,15 @@ public final class SoldierDutyGoal extends Goal {
 	private boolean mountSkipped;
 	@Nullable
 	private UUID focus;
+	/** Patrol came back because both weapons were gone. Each kind is tried once. */
+	private boolean resupplying;
+	private boolean triedMelee;
+	private boolean triedRanged;
+	private boolean tookFromChest;
+	private boolean emeraldsReady;
+	private int standAttempt;
+	@Nullable
+	private UUID resupplyBuyer;
 
 	public SoldierDutyGoal(Soldier soldier) {
 		this.soldier = soldier;
@@ -109,6 +121,7 @@ public final class SoldierDutyGoal extends Goal {
 		this.patrolTicks = 0;
 		this.attackCooldown = 0;
 		this.mountSkipped = false;
+		this.clearResupply();
 	}
 
 	@Override
@@ -129,6 +142,7 @@ public final class SoldierDutyGoal extends Goal {
 			this.stocked = false;
 			this.focus = null;
 			this.mountSkipped = false;
+			this.clearResupply();
 		}
 		if (this.following(order) && this.lord(level, chest) == null) {
 			this.soldier.stopUsingItem();
@@ -143,8 +157,23 @@ public final class SoldierDutyGoal extends Goal {
 			}
 			this.stocked = true;
 		}
+		if (this.soldier.alerting()) {
+			if (container != null && !this.grabChestWeapons(level, chestPos, container)) {
+				return;
+			}
+			if (!this.mountReady(level, chestPos, chest.ride())) {
+				this.adjustMount(level, chestPos, chest.ride());
+				return;
+			}
+			this.act(level, chestPos, chest);
+			return;
+		}
 		if (!this.mountReady(level, chestPos, chest.ride())) {
 			this.adjustMount(level, chestPos, chest.ride());
+			return;
+		}
+		if (order == SoldierOrder.PATROL && container != null && this.needsResupply()) {
+			this.resupply(level, chestPos, chest, container);
 			return;
 		}
 		this.act(level, chestPos, chest);
@@ -320,11 +349,10 @@ public final class SoldierDutyGoal extends Goal {
 		if (!this.isRanged(weapon)) {
 			return;
 		}
-		int draw = weapon.is(Items.CROSSBOW) ? CrossbowItem.getChargeDuration(weapon, this.soldier) : 20;
 		if (!this.soldier.isUsingItem()) {
 			this.soldier.startUsingItem(InteractionHand.MAIN_HAND);
 		}
-		if (this.soldier.getTicksUsingItem() < Math.max(1, draw)) {
+		if (this.soldier.getTicksUsingItem() < 20) {
 			return;
 		}
 		this.fire(level, target, weapon);
@@ -343,8 +371,7 @@ public final class SoldierDutyGoal extends Goal {
 		double horiz = Math.sqrt(dx * dx + dz * dz);
 		Projectile.spawnProjectileUsingShoot(arrow, level, weapon, dx, dy + horiz * 0.2, dz, 1.6F, 1.0F);
 		ammo.shrink(1);
-		SoundEvent sound = weapon.is(Items.CROSSBOW) ? SoundEvents.CROSSBOW_SHOOT : SoundEvents.ARROW_SHOOT;
-		this.soldier.playSound(sound, 1.0F, 1.0F);
+		this.soldier.playSound(SoundEvents.ARROW_SHOOT, 1.0F, 1.0F);
 	}
 
 	private void arm(boolean ranged) {
@@ -361,6 +388,7 @@ public final class SoldierDutyGoal extends Goal {
 		if (this.soldier.getMainHandItem() == wanted) {
 			return;
 		}
+		this.soldier.stopUsingItem();
 		SimpleContainer inventory = this.soldier.getInventory();
 		for (EquipmentSlot slot : EquipmentSlot.values()) {
 			if (slot == EquipmentSlot.MAINHAND || this.soldier.getItemBySlot(slot) != wanted) {
@@ -713,7 +741,7 @@ public final class SoldierDutyGoal extends Goal {
 	}
 
 	private boolean isRanged(ItemStack stack) {
-		return stack.is(Items.BOW) || stack.is(Items.CROSSBOW);
+		return stack.is(Items.BOW);
 	}
 
 	@Nullable
@@ -785,6 +813,322 @@ public final class SoldierDutyGoal extends Goal {
 			return 1.0;
 		}
 		return 1.0 / Math.sqrt(speed);
+	}
+
+	/** Alert may take spare weapons from the chest, then ride. It does not go shopping. */
+	private boolean grabChestWeapons(ServerLevel level, BlockPos chestPos, Container chest) {
+		boolean needMelee = this.bestCarried(this::isMelee) == null && this.chestHas(chest, this::isMelee);
+		boolean needRanged = this.bestCarried(this::isRanged) == null && this.chestHas(chest, this::isRanged);
+		if (!needMelee && !needRanged) {
+			return true;
+		}
+		if (!this.near(chestPos)) {
+			this.walkTo(chestPos.getX() + 0.5, chestPos.getY(), chestPos.getZ() + 0.5);
+			return false;
+		}
+		this.soldier.openChest(chest, chestPos);
+		this.halt();
+		if (needMelee) {
+			this.takeBest(level, chest, this::isMelee, null);
+		}
+		if (needRanged) {
+			this.takeBest(level, chest, this::isRanged, null);
+		}
+		if (this.bestCarried(this::isRanged) != null) {
+			this.pullArrows(level, chest);
+		}
+		this.soldier.closeChest();
+		return true;
+	}
+
+	private boolean chestHas(Container chest, Predicate<ItemStack> test) {
+		for (int slot = 0; slot < chest.getContainerSize(); slot++) {
+			if (test.test(chest.getItem(slot))) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private boolean hasWeapon() {
+		return this.bestCarried(this::isMelee) != null || this.bestCarried(this::isRanged) != null;
+	}
+
+	private boolean needsResupply() {
+		return this.resupplying || !this.hasWeapon();
+	}
+
+	/**
+	 * Both weapons are gone. Always try melee, then always try a bow, even if the sword is already in hand.
+	 * One weapon is enough to patrol again. If both attempts come back empty, rest.
+	 */
+	private void resupply(ServerLevel level, BlockPos chestPos, SoldierChestBlockEntity chest, Container container) {
+		if (!this.resupplying) {
+			this.resupplying = true;
+			this.triedMelee = false;
+			this.triedRanged = false;
+			this.tookFromChest = false;
+			this.emeraldsReady = false;
+			this.resupplyBuyer = null;
+			this.standAttempt = 0;
+			this.soldier.setTarget(null);
+			this.soldier.stopUsingItem();
+		}
+		if (!this.triedMelee) {
+			this.attemptWeapon(level, chestPos, container, true);
+			return;
+		}
+		if (!this.triedRanged) {
+			this.attemptWeapon(level, chestPos, container, false);
+			return;
+		}
+		if (this.hasWeapon()) {
+			if (this.bestCarried(this::isRanged) != null && this.near(chestPos)) {
+				this.soldier.openChest(container, chestPos);
+				this.pullArrows(level, container);
+				this.soldier.closeChest();
+			}
+			this.clearResupply();
+			return;
+		}
+		chest.setOrder(SoldierOrder.REST);
+		this.clearResupply();
+		this.soldier.stopUsingItem();
+		this.soldier.setTarget(null);
+		this.halt();
+	}
+
+	private void attemptWeapon(ServerLevel level, BlockPos chestPos, Container chest, boolean melee) {
+		Predicate<ItemStack> test = melee ? this::isMelee : this::isRanged;
+		if (this.bestCarried(test) != null) {
+			this.finishAttempt(melee);
+			return;
+		}
+		if (!this.tookFromChest) {
+			if (!this.near(chestPos)) {
+				this.walkTo(chestPos.getX() + 0.5, chestPos.getY(), chestPos.getZ() + 0.5);
+				return;
+			}
+			this.soldier.openChest(chest, chestPos);
+			this.halt();
+			if (!this.emeraldsReady) {
+				this.pullEmeralds(chest);
+				this.emeraldsReady = true;
+			}
+			this.takeBest(level, chest, test, null);
+			this.soldier.closeChest();
+			this.tookFromChest = true;
+			if (this.bestCarried(test) != null) {
+				this.finishAttempt(melee);
+			}
+			return;
+		}
+		if (this.resupplyBuyer == null) {
+			if (!this.near(chestPos)) {
+				this.walkTo(chestPos.getX() + 0.5, chestPos.getY(), chestPos.getZ() + 0.5);
+				return;
+			}
+			Villager villager = this.findSeller(level, chest, test);
+			if (villager == null) {
+				this.finishAttempt(melee);
+				return;
+			}
+			this.resupplyBuyer = villager.getUUID();
+			this.standAttempt = 0;
+		}
+		if (!(level.getEntity(this.resupplyBuyer) instanceof Villager villager) || !villager.isAlive()) {
+			this.finishAttempt(melee);
+			return;
+		}
+		if (this.findWeaponOffer(level, villager, chest, test) == null) {
+			this.finishAttempt(melee);
+			return;
+		}
+		if (!VillagerWindow.canTrade(level, villager, this.soldier.getX(), this.soldier.getY(), this.soldier.getZ())) {
+			if (!this.approachSeller(level, villager)) {
+				this.finishAttempt(melee);
+			}
+			return;
+		}
+		this.buyWeapon(level, villager, chest, test);
+		this.finishAttempt(melee);
+	}
+
+	private void finishAttempt(boolean melee) {
+		if (melee) {
+			this.triedMelee = true;
+		} else {
+			this.triedRanged = true;
+		}
+		this.tookFromChest = false;
+		this.resupplyBuyer = null;
+		this.standAttempt = 0;
+	}
+
+	private void clearResupply() {
+		this.resupplying = false;
+		this.triedMelee = false;
+		this.triedRanged = false;
+		this.tookFromChest = false;
+		this.emeraldsReady = false;
+		this.resupplyBuyer = null;
+		this.standAttempt = 0;
+	}
+
+	private void pullEmeralds(Container chest) {
+		int have = this.countBody(stack -> stack.is(Items.EMERALD));
+		while (have < 64) {
+			ItemStack stack = ChestStash.extractMatching(chest, candidate -> candidate.is(Items.EMERALD));
+			if (stack.isEmpty()) {
+				return;
+			}
+			int need = 64 - have;
+			ItemStack extra = ItemStack.EMPTY;
+			if (stack.getCount() > need) {
+				extra = stack.split(stack.getCount() - need);
+			}
+			int taken = stack.getCount();
+			ItemStack leftover = this.soldier.getInventory().addItem(stack);
+			have += taken - leftover.getCount();
+			if (!leftover.isEmpty()) {
+				ChestStash.insert(chest, leftover);
+			}
+			if (!extra.isEmpty()) {
+				ChestStash.insert(chest, extra);
+			}
+			if (taken == leftover.getCount()) {
+				return;
+			}
+		}
+	}
+
+	@Nullable
+	private Villager findSeller(ServerLevel level, Container chest, Predicate<ItemStack> test) {
+		AABB area = this.soldier.getBoundingBox().inflate(TradingRanges.VILLAGER_SEARCH, TradingRanges.VILLAGER_SEARCH_VERTICAL, TradingRanges.VILLAGER_SEARCH);
+		List<Villager> villagers = level.getEntitiesOfClass(Villager.class, area, villager -> this.canBuyWeapon(level, villager, chest, test));
+		villagers.sort((left, right) -> Double.compare(this.soldier.distanceToSqr(left), this.soldier.distanceToSqr(right)));
+		return villagers.isEmpty() ? null : villagers.getFirst();
+	}
+
+	private boolean canBuyWeapon(ServerLevel level, Villager villager, Container chest, Predicate<ItemStack> test) {
+		if (villager instanceof Soldier || !villager.isAlive() || villager.isBaby() || villager.isSleeping() || villager.isRemoved()) {
+			return false;
+		}
+		if (villager.getTradingPlayer() != null) {
+			return false;
+		}
+		return this.findWeaponOffer(level, villager, chest, test) != null;
+	}
+
+	@Nullable
+	private MerchantOffer findWeaponOffer(ServerLevel level, Villager villager, Container chest, Predicate<ItemStack> test) {
+		MerchantOffers offers = villager.getOffers();
+		for (MerchantOffer offer : offers) {
+			if (offer.isOutOfStock() || !test.test(offer.getResult())) {
+				continue;
+			}
+			ItemStack costA = offer.getCostA();
+			if (costA.isEmpty() || !costA.is(Items.EMERALD) || this.countStored(chest, stack -> stack.is(Items.EMERALD)) < costA.getCount()) {
+				continue;
+			}
+			ItemStack costB = offer.getCostB();
+			if (!costB.isEmpty() && this.countStored(chest, stack -> ItemStack.isSameItemSameComponents(stack, costB)) < costB.getCount()) {
+				continue;
+			}
+			return offer;
+		}
+		return null;
+	}
+
+	private void buyWeapon(ServerLevel level, Villager villager, Container chest, Predicate<ItemStack> test) {
+		MerchantOffer offer = this.findWeaponOffer(level, villager, chest, test);
+		if (offer == null) {
+			return;
+		}
+		ItemStack payment = this.takePayment(chest, Items.EMERALD, offer.getCostA().getCount(), null);
+		ItemStack second = ItemStack.EMPTY;
+		ItemStack costB = offer.getCostB();
+		if (!costB.isEmpty()) {
+			second = this.takePayment(chest, costB.getItem(), costB.getCount(), costB);
+			if (second.getCount() < costB.getCount()) {
+				this.keep(level, chest, payment);
+				this.keep(level, chest, second);
+				return;
+			}
+		}
+		if (payment.getCount() < offer.getCostA().getCount() || !offer.satisfiedBy(payment, second) || !offer.take(payment, second)) {
+			this.keep(level, chest, payment);
+			this.keep(level, chest, second);
+			return;
+		}
+		this.keep(level, chest, payment);
+		this.keep(level, chest, second);
+		villager.notifyTrade(offer);
+		this.keep(level, chest, offer.assemble());
+		level.playSound(null, villager.blockPosition(), SoundEvents.VILLAGER_YES, SoundSource.NEUTRAL, 0.9F, 1.0F);
+	}
+
+	private ItemStack takePayment(Container chest, Item item, int amount, @Nullable ItemStack exact) {
+		Predicate<ItemStack> test = exact == null ? stack -> stack.is(item) : stack -> ItemStack.isSameItemSameComponents(stack, exact);
+		ItemStack taken = this.takeFrom(this.soldier.getInventory(), test, amount);
+		if (taken.getCount() >= amount) {
+			return taken;
+		}
+		ItemStack more = this.takeFrom(chest, test, amount - taken.getCount());
+		if (taken.isEmpty()) {
+			return more;
+		}
+		taken.grow(more.getCount());
+		return taken;
+	}
+
+	private ItemStack takeFrom(@Nullable Container container, Predicate<ItemStack> test, int amount) {
+		if (container == null || amount <= 0) {
+			return ItemStack.EMPTY;
+		}
+		ItemStack taken = ItemStack.EMPTY;
+		for (int slot = 0; slot < container.getContainerSize() && (taken.isEmpty() || taken.getCount() < amount); slot++) {
+			ItemStack stack = container.getItem(slot);
+			if (!test.test(stack)) {
+				continue;
+			}
+			int move = Math.min(amount - taken.getCount(), stack.getCount());
+			if (taken.isEmpty()) {
+				taken = stack.split(move);
+			} else {
+				stack.shrink(move);
+				taken.grow(move);
+			}
+			container.setItem(slot, stack.isEmpty() ? ItemStack.EMPTY : stack);
+		}
+		if (!taken.isEmpty()) {
+			container.setChanged();
+		}
+		return taken;
+	}
+
+	private int countStored(Container chest, Predicate<ItemStack> test) {
+		int total = this.countBody(test);
+		for (int slot = 0; slot < chest.getContainerSize(); slot++) {
+			ItemStack stack = chest.getItem(slot);
+			if (test.test(stack)) {
+				total += stack.getCount();
+			}
+		}
+		return total;
+	}
+
+	/** @return false when no stand is left, so this buy attempt is over */
+	private boolean approachSeller(ServerLevel level, Villager villager) {
+		List<BlockPos> stands = VillagerWindow.stands(level, villager, this.soldier);
+		if (stands.isEmpty() || this.standAttempt >= stands.size()) {
+			return false;
+		}
+		BlockPos stand = stands.get(this.standAttempt);
+		if (!this.soldier.getNavigation().moveTo(stand.getX() + 0.5, stand.getY(), stand.getZ() + 0.5, 1.0)) {
+			this.standAttempt++;
+		}
+		return true;
 	}
 
 	private void halt() {
