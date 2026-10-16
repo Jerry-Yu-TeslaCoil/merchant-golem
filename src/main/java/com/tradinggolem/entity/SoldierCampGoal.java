@@ -30,7 +30,7 @@ import java.util.function.Predicate;
 
 /** Builds the camp, then repairs it only while the stored order is rest. */
 public final class SoldierCampGoal extends Goal {
-	private static final int PAUSE = 8;
+	private static final int PAUSE = 20;
 	private static final double REACH = 4.0 * 4.0;
 
 	private final Soldier soldier;

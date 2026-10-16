@@ -20,6 +20,8 @@ import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
+import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.npc.villager.Villager;
 import net.minecraft.world.entity.npc.villager.VillagerData;
@@ -42,6 +44,8 @@ import java.util.UUID;
 
 public class Soldier extends Villager implements net.minecraft.world.entity.ContainerUser {
 	private static final Map<GlobalPos, UUID> BY_CHEST = new HashMap<>();
+	/** Same base speed as a wolf. */
+	private static final double WALK_SPEED = 0.3;
 
 	@Nullable
 	private BlockPos chestPos;
@@ -57,12 +61,18 @@ public class Soldier extends Villager implements net.minecraft.world.entity.Cont
 		super(type, level);
 		this.offers = new MerchantOffers();
 		this.setPersistenceRequired();
+		this.applyWalkSpeed();
+	}
+
+	public static AttributeSupplier.Builder createAttributes() {
+		return Villager.createAttributes().add(Attributes.MOVEMENT_SPEED, WALK_SPEED);
 	}
 
 	@Override
 	protected void registerGoals() {
 		super.registerGoals();
 		this.goalSelector.addGoal(1, new SoldierCampGoal(this));
+		this.goalSelector.addGoal(2, new SoldierRestGoal(this));
 	}
 
 	public void bind(BlockPos chestPos, ResourceKey<VillagerType> villagerType) {
@@ -335,5 +345,13 @@ public class Soldier extends Villager implements net.minecraft.world.entity.Cont
 			}
 		}
 		this.setPersistenceRequired();
+		this.applyWalkSpeed();
+	}
+
+	private void applyWalkSpeed() {
+		var speed = this.getAttribute(Attributes.MOVEMENT_SPEED);
+		if (speed != null) {
+			speed.setBaseValue(WALK_SPEED);
+		}
 	}
 }
