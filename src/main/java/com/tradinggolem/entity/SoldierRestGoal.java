@@ -160,6 +160,9 @@ public final class SoldierRestGoal extends Goal {
 		if (!(level.getBlockEntity(this.soldier.chestPos()) instanceof SoldierChestBlockEntity chest)) {
 			return false;
 		}
+		if (this.soldier.alerting()) {
+			return false;
+		}
 		return chest.campCompleted() && chest.order() == SoldierOrder.REST && CampSite.isComplete(level, this.soldier.chestPos());
 	}
 
@@ -171,8 +174,9 @@ public final class SoldierRestGoal extends Goal {
 		BlockPos post = CampSite.hitch(chest);
 		double distance = horse.distanceToSqr(post.getX() + 0.5, post.getY(), post.getZ() + 0.5);
 		if (distance > 6.0) {
-			if (!horse.getNavigation().moveTo(post.getX() + 0.5, post.getY(), post.getZ() + 0.5, 1.0)) {
-				horse.getMoveControl().setWantedPosition(post.getX() + 0.5, post.getY(), post.getZ() + 0.5, 1.0);
+			double speed = SoldierDutyGoal.riddenSpeed(horse);
+			if (!horse.getNavigation().moveTo(post.getX() + 0.5, post.getY(), post.getZ() + 0.5, speed)) {
+				horse.getMoveControl().setWantedPosition(post.getX() + 0.5, post.getY(), post.getZ() + 0.5, speed);
 			}
 			return;
 		}

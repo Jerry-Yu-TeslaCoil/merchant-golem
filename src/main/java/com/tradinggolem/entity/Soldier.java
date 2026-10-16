@@ -56,6 +56,7 @@ public class Soldier extends Villager implements net.minecraft.world.entity.Cont
 	private boolean checkedJob;
 	@Nullable
 	private BlockPos openedChestPos;
+	private int alertHold;
 
 	public Soldier(EntityType<? extends Soldier> type, Level level) {
 		super(type, level);
@@ -65,14 +66,38 @@ public class Soldier extends Villager implements net.minecraft.world.entity.Cont
 	}
 
 	public static AttributeSupplier.Builder createAttributes() {
-		return Villager.createAttributes().add(Attributes.MOVEMENT_SPEED, WALK_SPEED);
+		return Villager.createAttributes()
+			.add(Attributes.MOVEMENT_SPEED, WALK_SPEED)
+			.add(Attributes.ATTACK_DAMAGE, 1.0);
 	}
 
 	@Override
 	protected void registerGoals() {
 		super.registerGoals();
+		this.goalSelector.addGoal(0, new SoldierDutyGoal(this));
 		this.goalSelector.addGoal(1, new SoldierCampGoal(this));
 		this.goalSelector.addGoal(2, new SoldierRestGoal(this));
+	}
+
+	public boolean alerting() {
+		return this.alertHold > 0;
+	}
+
+	@Override
+	protected void customServerAiStep(ServerLevel level) {
+		super.customServerAiStep(level);
+		boolean near = false;
+		if (this.chestPos != null && level.isLoaded(this.chestPos) && level.getBlockEntity(this.chestPos) instanceof SoldierChestBlockEntity chest && chest.campCompleted()) {
+			SoldierOrder order = chest.order();
+			if ((order == SoldierOrder.REST || order == SoldierOrder.PATROL) && SoldierDutyGoal.threatNear(level, this.chestPos, SoldierDutyGoal.ALERT_RANGE)) {
+				near = true;
+			}
+		}
+		if (near) {
+			this.alertHold = 40;
+		} else if (this.alertHold > 0) {
+			this.alertHold--;
+		}
 	}
 
 	public void bind(BlockPos chestPos, ResourceKey<VillagerType> villagerType) {
@@ -352,6 +377,10 @@ public class Soldier extends Villager implements net.minecraft.world.entity.Cont
 		var speed = this.getAttribute(Attributes.MOVEMENT_SPEED);
 		if (speed != null) {
 			speed.setBaseValue(WALK_SPEED);
+		}
+		var attack = this.getAttribute(Attributes.ATTACK_DAMAGE);
+		if (attack != null) {
+			attack.setBaseValue(1.0);
 		}
 	}
 }

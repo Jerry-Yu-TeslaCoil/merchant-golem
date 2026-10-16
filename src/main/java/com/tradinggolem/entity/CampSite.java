@@ -35,6 +35,9 @@ public final class CampSite {
 		if (!chest.campCompleted()) {
 			return true;
 		}
+		if (soldier.alerting()) {
+			return false;
+		}
 		return chest.order() == SoldierOrder.REST && !isComplete(level, soldier.chestPos());
 	}
 
