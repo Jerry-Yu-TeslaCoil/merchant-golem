@@ -3,7 +3,7 @@ package com.tradinggolem.menu;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 
-public record SoldierScreenData(String lordName, int order, int weapon, int ride) {
+public record SoldierScreenData(String lordName, int order, int weapon, int ride, String demands) {
 	public static final StreamCodec<io.netty.buffer.ByteBuf, SoldierScreenData> STREAM_CODEC = StreamCodec.composite(
 			ByteBufCodecs.stringUtf8(64),
 			SoldierScreenData::lordName,
@@ -13,6 +13,8 @@ public record SoldierScreenData(String lordName, int order, int weapon, int ride
 			SoldierScreenData::weapon,
 			ByteBufCodecs.VAR_INT,
 			SoldierScreenData::ride,
+			ByteBufCodecs.stringUtf8(512),
+			SoldierScreenData::demands,
 			SoldierScreenData::new
 	);
 }

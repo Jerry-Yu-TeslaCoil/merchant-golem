@@ -63,7 +63,14 @@ public class SoldierScreen extends AbstractContainerScreen<SoldierMenu> {
 					: Component.literal(this.menu.lordName());
 			graphics.text(this.font, Component.translatable("gui.trading_golem.soldier.lord", lord), 8, 32, TEXT, false);
 			graphics.text(this.font, Component.translatable("gui.trading_golem.soldier.demands"), 8, 52, TEXT, false);
-			graphics.text(this.font, Component.translatable("gui.trading_golem.soldier.demands_empty"), 8, 66, TEXT, false);
+			var lines = this.menu.demandLines();
+			if (lines.isEmpty()) {
+				graphics.text(this.font, Component.translatable("gui.trading_golem.soldier.demands_empty"), 8, 66, TEXT, false);
+			} else {
+				for (int i = 0; i < lines.size() && i < 8; i++) {
+					graphics.text(this.font, lines.get(i), 8, 66 + i * 12, TEXT, false);
+				}
+			}
 		}
 	}
 

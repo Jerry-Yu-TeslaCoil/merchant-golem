@@ -10,7 +10,10 @@ import com.tradinggolem.client.renderer.TradingGolemRenderer;
 import com.tradinggolem.entity.ModEntityTypes;
 import com.tradinggolem.entity.Soldier;
 import com.tradinggolem.menu.ModMenus;
+import com.tradinggolem.menu.SoldierDemandsPayload;
+import com.tradinggolem.menu.SoldierMenu;
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.rendering.v1.BlockEntityRendererRegistry;
 import net.minecraft.client.renderer.entity.EntityRenderer;
 import net.minecraft.client.renderer.entity.EntityRendererProvider;
@@ -23,6 +26,11 @@ public final class TradingGolemClient implements ClientModInitializer {
 	public void onInitializeClient() {
 		ModModelLayers.register();
 		MenuScreens.register(ModMenus.SOLDIER, SoldierScreen::new);
+		ClientPlayNetworking.registerGlobalReceiver(SoldierDemandsPayload.TYPE, (payload, context) -> context.client().execute(() -> {
+			if (context.client().player != null && context.client().player.containerMenu instanceof SoldierMenu menu) {
+				menu.setDemands(payload.text());
+			}
+		}));
 		EntityRenderers.register(ModEntityTypes.TRADING_GOLEM, TradingGolemRenderer::new);
 		EntityRenderers.register(ModEntityTypes.FARMING_GOLEM, FarmingGolemRenderer::new);
 		EntityRenderers.register(ModEntityTypes.SOLDIER, soldierRenderer());

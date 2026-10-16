@@ -5,7 +5,9 @@ import com.tradinggolem.block.SoldierChestBlockEntity;
 import com.tradinggolem.entity.Soldier;
 import com.tradinggolem.entity.SoldierOrder;
 import com.tradinggolem.entity.SoldierWeaponMode;
+import com.tradinggolem.entity.CampSite;
 import net.fabricmc.fabric.api.menu.v1.ExtendedMenuProvider;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
@@ -38,7 +40,9 @@ public class SoldierMenu extends AbstractContainerMenu {
 	private final Soldier soldier;
 	@Nullable
 	private final SoldierChestBlockEntity chest;
+	private final Player viewer;
 	private boolean inventoryVisible;
+	private String demands = "";
 
 	public SoldierMenu(int containerId, Inventory playerInventory, Container backpack, Container equipment, ContainerData data, @Nullable Soldier soldier, @Nullable SoldierChestBlockEntity chest, String lordName) {
 		super(ModMenus.SOLDIER, containerId);
@@ -46,6 +50,7 @@ public class SoldierMenu extends AbstractContainerMenu {
 		this.lordName = lordName;
 		this.soldier = soldier;
 		this.chest = chest;
+		this.viewer = playerInventory.player;
 		this.inventoryVisible = !playerInventory.player.level().isClientSide();
 		for (int i = 0; i < BACKPACK_SIZE; i++) {
 			int column = i % 4;
@@ -74,7 +79,9 @@ public class SoldierMenu extends AbstractContainerMenu {
 		sync.set(0, data.order());
 		sync.set(1, data.weapon());
 		sync.set(2, data.ride());
-		return new SoldierMenu(containerId, inventory, new SimpleContainer(BACKPACK_SIZE), new SimpleContainer(EQUIPMENT_SIZE), sync, null, null, data.lordName());
+		SoldierMenu menu = new SoldierMenu(containerId, inventory, new SimpleContainer(BACKPACK_SIZE), new SimpleContainer(EQUIPMENT_SIZE), sync, null, null, data.lordName());
+		menu.demands = data.demands();
+		return menu;
 	}
 
 	public static void open(ServerPlayer player, Soldier soldier) {
@@ -92,10 +99,11 @@ public class SoldierMenu extends AbstractContainerMenu {
 			}
 		}
 		String shown = lordName;
+		String demandText = CampSite.demands(level, pos, soldier);
 		player.openMenu(new ExtendedMenuProvider<SoldierScreenData>() {
 			@Override
 			public SoldierScreenData getScreenOpeningData(ServerPlayer serverPlayer) {
-				return new SoldierScreenData(shown, chest.order().ordinal(), chest.weaponMode().ordinal(), chest.ride() ? 1 : 0);
+				return new SoldierScreenData(shown, chest.order().ordinal(), chest.weaponMode().ordinal(), chest.ride() ? 1 : 0, demandText);
 			}
 
 			@Override
@@ -105,7 +113,9 @@ public class SoldierMenu extends AbstractContainerMenu {
 
 			@Override
 			public AbstractContainerMenu createMenu(int containerId, Inventory inventory, Player opener) {
-				return server(containerId, inventory, soldier, chest, shown);
+				SoldierMenu menu = server(containerId, inventory, soldier, chest, shown);
+				menu.demands = demandText;
+				return menu;
 			}
 		});
 	}
@@ -148,6 +158,58 @@ public class SoldierMenu extends AbstractContainerMenu {
 
 	public boolean ride() {
 		return this.data.get(2) != 0;
+	}
+
+	public void setDemands(String demands) {
+		this.demands = demands == null ? "" : demands;
+	}
+
+	public java.util.List<Component> demandLines() {
+		if (this.demands.isEmpty()) {
+			return java.util.List.of();
+		}
+		java.util.ArrayList<Component> lines = new java.util.ArrayList<>();
+		for (String part : this.demands.split(",")) {
+			String[] bits = part.split(":", 2);
+			int count = bits.length > 1 ? parse(bits[1]) : 1;
+			Component line = switch (bits[0]) {
+				case "PICK" -> Component.translatable("gui.trading_golem.soldier.demand.pick");
+				case "SHOVEL" -> Component.translatable("gui.trading_golem.soldier.demand.shovel");
+				case "STONE" -> Component.translatable("gui.trading_golem.soldier.demand.stone", count);
+				case "BED" -> Component.translatable("gui.trading_golem.soldier.demand.bed");
+				case "FENCE" -> Component.translatable("gui.trading_golem.soldier.demand.fence");
+				case "FOOD" -> Component.translatable("gui.trading_golem.soldier.demand.food", count);
+				default -> null;
+			};
+			if (line != null) {
+				lines.add(line);
+			}
+		}
+		return lines;
+	}
+
+	private static int parse(String text) {
+		try {
+			return Integer.parseInt(text);
+		} catch (NumberFormatException exception) {
+			return 1;
+		}
+	}
+
+	@Override
+	public void broadcastChanges() {
+		super.broadcastChanges();
+		if (this.soldier == null || this.chest == null || !(this.soldier.level() instanceof ServerLevel level)) {
+			return;
+		}
+		String next = CampSite.demands(level, this.chest.getBlockPos(), this.soldier);
+		if (next.equals(this.demands)) {
+			return;
+		}
+		this.demands = next;
+		if (this.viewer instanceof ServerPlayer player) {
+			ServerPlayNetworking.send(player, new SoldierDemandsPayload(next));
+		}
 	}
 
 	public void setInventoryVisible(boolean inventoryVisible) {
@@ -255,7 +317,7 @@ public class SoldierMenu extends AbstractContainerMenu {
 
 		@Override
 		public int getMaxStackSize() {
-			return 1;
+			return this.equipmentSlot == EquipmentSlot.MAINHAND || this.equipmentSlot == EquipmentSlot.OFFHAND ? 64 : 1;
 		}
 	}
 }

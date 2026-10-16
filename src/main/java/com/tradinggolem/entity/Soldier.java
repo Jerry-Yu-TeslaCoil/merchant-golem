@@ -40,7 +40,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
-public class Soldier extends Villager {
+public class Soldier extends Villager implements net.minecraft.world.entity.ContainerUser {
 	private static final Map<GlobalPos, UUID> BY_CHEST = new HashMap<>();
 
 	@Nullable
@@ -50,6 +50,8 @@ public class Soldier extends Villager {
 	private boolean droppedCarried;
 	private boolean dismissed;
 	private boolean checkedJob;
+	@Nullable
+	private BlockPos openedChestPos;
 
 	public Soldier(EntityType<? extends Soldier> type, Level level) {
 		super(type, level);
@@ -57,9 +59,43 @@ public class Soldier extends Villager {
 		this.setPersistenceRequired();
 	}
 
+	@Override
+	protected void registerGoals() {
+		super.registerGoals();
+		this.goalSelector.addGoal(1, new SoldierCampGoal(this));
+	}
+
 	public void bind(BlockPos chestPos, ResourceKey<VillagerType> villagerType) {
 		this.chestPos = chestPos.immutable();
 		this.villagerType = villagerType;
+	}
+
+	public void openChest(net.minecraft.world.Container container, BlockPos pos) {
+		if (pos.equals(this.openedChestPos)) {
+			return;
+		}
+		this.closeChest();
+		container.startOpen(this);
+		this.openedChestPos = pos.immutable();
+	}
+
+	public void closeChest() {
+		BlockPos pos = this.openedChestPos;
+		this.openedChestPos = null;
+		if (pos == null || !(this.level().getBlockEntity(pos) instanceof net.minecraft.world.Container container)) {
+			return;
+		}
+		container.stopOpen(this);
+	}
+
+	@Override
+	public boolean hasContainerOpen(net.minecraft.world.level.block.entity.ContainerOpenersCounter counter, BlockPos pos) {
+		return pos.equals(this.openedChestPos);
+	}
+
+	@Override
+	public double getContainerInteractionRange() {
+		return 4.0;
 	}
 
 	@Nullable
@@ -126,6 +162,7 @@ public class Soldier extends Villager {
 			return;
 		}
 		this.dismissed = true;
+		this.closeChest();
 		if (this.isPassenger()) {
 			this.stopRiding();
 		}
@@ -178,6 +215,7 @@ public class Soldier extends Villager {
 				level.getPoiManager().release(this.chestPos);
 			}
 		}
+		this.closeChest();
 		super.remove(reason);
 	}
 

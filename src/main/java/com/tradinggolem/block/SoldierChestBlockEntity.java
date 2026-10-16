@@ -144,6 +144,11 @@ public class SoldierChestBlockEntity extends BaseContainerBlockEntity implements
 		return this.ride;
 	}
 
+	public void setCampCompleted(boolean campCompleted) {
+		this.campCompleted = campCompleted;
+		this.setChanged();
+	}
+
 	public boolean campCompleted() {
 		return this.campCompleted;
 	}
