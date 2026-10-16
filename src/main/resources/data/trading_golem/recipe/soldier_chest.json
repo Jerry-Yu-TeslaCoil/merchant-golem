@@ -1,0 +1,18 @@
+{
+	"type": "minecraft:crafting_shaped",
+	"pattern": [
+		" G ",
+		"I I",
+		"LCL"
+	],
+	"key": {
+		"G": "minecraft:gold_block",
+		"I": "minecraft:iron_block",
+		"L": "minecraft:leather",
+		"C": "minecraft:chest"
+	},
+	"result": {
+		"id": "trading_golem:soldier_chest",
+		"count": 1
+	}
+}

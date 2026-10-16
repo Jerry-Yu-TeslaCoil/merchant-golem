@@ -3,6 +3,8 @@ package com.tradinggolem;
 import com.tradinggolem.block.ModBlocks;
 import com.tradinggolem.entity.ModEntityTypes;
 import com.tradinggolem.item.ModItems;
+import com.tradinggolem.menu.ModMenus;
+import com.tradinggolem.villager.ModVillagers;
 import net.fabricmc.api.ModInitializer;
 import net.minecraft.resources.Identifier;
 import org.slf4j.Logger;
@@ -17,6 +19,8 @@ public final class TradingGolemMod implements ModInitializer {
 		ModBlocks.register();
 		ModEntityTypes.register();
 		ModItems.register();
+		ModVillagers.register();
+		ModMenus.register();
 		LOGGER.info("交易傀儡已就绪");
 	}
 

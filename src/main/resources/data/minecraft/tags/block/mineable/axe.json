@@ -2,6 +2,7 @@
 	"replace": false,
 	"values": [
 		"trading_golem:trading_chest",
-		"trading_golem:crop_chest"
+		"trading_golem:crop_chest",
+		"trading_golem:soldier_chest"
 	]
 }
