@@ -1,4 +1,8 @@
 {
+	"block.trading_golem.trading_chest": "交易箱子",
+	"block.trading_golem.crop_chest": "农作物箱子",
 	"entity.trading_golem.trading_golem": "交易傀儡",
-	"item.trading_golem.trading_golem_spawn_egg": "交易傀儡刷怪蛋"
+	"entity.trading_golem.farming_golem": "务农傀儡",
+	"item.trading_golem.trading_golem_spawn_egg": "交易傀儡刷怪蛋",
+	"item.trading_golem.farming_golem_spawn_egg": "务农傀儡刷怪蛋"
 }

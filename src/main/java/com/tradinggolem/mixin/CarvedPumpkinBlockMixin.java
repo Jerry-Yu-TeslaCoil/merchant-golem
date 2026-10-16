@@ -1,5 +1,6 @@
 package com.tradinggolem.mixin;
 
+import com.tradinggolem.summon.FarmingGolemSummon;
 import com.tradinggolem.summon.TradingGolemSummon;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
@@ -15,5 +16,6 @@ public class CarvedPumpkinBlockMixin {
 	@Inject(method = "onPlace", at = @At("TAIL"))
 	private void tradingGolem$onPlace(BlockState state, Level level, BlockPos pos, BlockState oldState, boolean movedByPiston, CallbackInfo ci) {
 		TradingGolemSummon.trySummon(level, pos, state, oldState, movedByPiston);
+		FarmingGolemSummon.trySummon(level, pos, state, oldState, movedByPiston);
 	}
 }

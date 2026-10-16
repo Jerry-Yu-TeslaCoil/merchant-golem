@@ -12,23 +12,34 @@ import net.minecraft.world.entity.MobCategory;
 public final class ModEntityTypes {
 	public static final EntityType<TradingGolem> TRADING_GOLEM = Registry.register(
 			BuiltInRegistries.ENTITY_TYPE,
-			key(),
+			key("trading_golem"),
 			EntityType.Builder.of(TradingGolem::new, MobCategory.MISC)
 					.sized(0.6F, 0.95F)
 					.eyeHeight(0.72F)
 					.fireImmune()
 					.clientTrackingRange(10)
-					.build(key())
+					.build(key("trading_golem"))
+	);
+	public static final EntityType<FarmingGolem> FARMING_GOLEM = Registry.register(
+			BuiltInRegistries.ENTITY_TYPE,
+			key("farming_golem"),
+			EntityType.Builder.of(FarmingGolem::new, MobCategory.MISC)
+					.sized(0.6F, 0.95F)
+					.eyeHeight(0.72F)
+					.fireImmune()
+					.clientTrackingRange(10)
+					.build(key("farming_golem"))
 	);
 
 	private ModEntityTypes() {
 	}
 
-	private static ResourceKey<EntityType<?>> key() {
-		return ResourceKey.create(Registries.ENTITY_TYPE, TradingGolemMod.id("trading_golem"));
+	private static ResourceKey<EntityType<?>> key(String path) {
+		return ResourceKey.create(Registries.ENTITY_TYPE, TradingGolemMod.id(path));
 	}
 
 	public static void register() {
 		FabricDefaultAttributeRegistry.register(TRADING_GOLEM, TradingGolem.createAttributes());
+		FabricDefaultAttributeRegistry.register(FARMING_GOLEM, FarmingGolem.createAttributes());
 	}
 }

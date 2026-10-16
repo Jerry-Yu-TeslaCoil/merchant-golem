@@ -1,32 +1,36 @@
 package com.tradinggolem.entity;
 
+import com.tradinggolem.block.TradingChestBlock;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.Container;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Predicate;
 
-/** Reads and writes the golem's chest, including both halves of a double chest. */
+/** Reads and writes the golem's own trading chest. */
 public final class ChestStash {
 	private ChestStash() {
 	}
 
 	public static Container get(Level level, BlockPos pos) {
 		BlockState state = level.getBlockState(pos);
-		if (!(state.getBlock() instanceof ChestBlock chest)) {
+		if (!(state.getBlock() instanceof TradingChestBlock)) {
 			return null;
 		}
-		return ChestBlock.getContainer(chest, state, level, pos, true);
+		if (level.getBlockEntity(pos) instanceof Container container) {
+			return container;
+		}
+		return null;
 	}
 
 	public static boolean isChest(Level level, BlockPos pos) {
-		return level.getBlockState(pos).getBlock() instanceof ChestBlock;
+		return level.getBlockState(pos).getBlock() instanceof TradingChestBlock;
 	}
 
 	public static ItemStack insert(Container container, ItemStack stack) {
@@ -87,6 +91,20 @@ public final class ChestStash {
 			container.setChanged();
 		}
 		return taken;
+	}
+
+	public static ItemStack extractMatching(Container container, Predicate<ItemStack> predicate) {
+		for (int slot = 0; slot < container.getContainerSize(); slot++) {
+			ItemStack stack = container.getItem(slot);
+			if (stack.isEmpty() || !predicate.test(stack)) {
+				continue;
+			}
+			ItemStack taken = stack.copy();
+			container.setItem(slot, ItemStack.EMPTY);
+			container.setChanged();
+			return taken;
+		}
+		return ItemStack.EMPTY;
 	}
 
 	/** Slot indexes of goods the golem is allowed to sell, in chest order. Emeralds stay put. */

@@ -1,5 +1,6 @@
 package com.tradinggolem;
 
+import com.tradinggolem.block.ModBlocks;
 import com.tradinggolem.entity.ModEntityTypes;
 import com.tradinggolem.item.ModItems;
 import net.fabricmc.api.ModInitializer;
@@ -13,6 +14,7 @@ public final class TradingGolemMod implements ModInitializer {
 
 	@Override
 	public void onInitialize() {
+		ModBlocks.register();
 		ModEntityTypes.register();
 		ModItems.register();
 		LOGGER.info("交易傀儡已就绪");

@@ -1,0 +1,6 @@
+{
+	"parent": "minecraft:item/generated",
+	"textures": {
+		"layer0": "trading_golem:item/farming_golem_spawn_egg"
+	}
+}

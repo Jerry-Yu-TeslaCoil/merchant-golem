@@ -17,6 +17,11 @@ public final class ModItems {
 			SpawnEggItem::new,
 			new Item.Properties().spawnEgg(ModEntityTypes.TRADING_GOLEM)
 	);
+	public static final Item FARMING_GOLEM_SPAWN_EGG = register(
+			"farming_golem_spawn_egg",
+			SpawnEggItem::new,
+			new Item.Properties().spawnEgg(ModEntityTypes.FARMING_GOLEM)
+	);
 
 	private ModItems() {
 	}
@@ -28,6 +33,9 @@ public final class ModItems {
 	}
 
 	public static void register() {
-		CreativeModeTabEvents.modifyOutputEvent(CreativeModeTabs.SPAWN_EGGS).register(output -> output.accept(TRADING_GOLEM_SPAWN_EGG));
+		CreativeModeTabEvents.modifyOutputEvent(CreativeModeTabs.SPAWN_EGGS).register(output -> {
+			output.accept(TRADING_GOLEM_SPAWN_EGG);
+			output.accept(FARMING_GOLEM_SPAWN_EGG);
+		});
 	}
 }

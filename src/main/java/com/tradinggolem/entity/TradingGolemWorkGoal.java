@@ -11,12 +11,8 @@ import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.entity.npc.villager.Villager;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import net.minecraft.world.level.block.ChestBlock;
-import net.minecraft.world.level.block.state.properties.ChestType;
 import net.minecraft.world.item.trading.MerchantOffer;
 import net.minecraft.world.item.trading.MerchantOffers;
-import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import org.jetbrains.annotations.Nullable;
 
@@ -136,24 +132,13 @@ public final class TradingGolemWorkGoal extends Goal {
 	}
 
 	private boolean claimedByAnother(ServerLevel level, BlockPos pos) {
-		BlockPos connected = connectedChest(level, pos);
 		AABB area = new AABB(pos).inflate(64.0);
 		for (TradingGolem other : level.getEntitiesOfClass(TradingGolem.class, area, entity -> entity != this.golem && entity.isAlive())) {
-			BlockPos claimed = other.chestPos();
-			if (pos.equals(claimed) || (connected != null && connected.equals(claimed))) {
+			if (pos.equals(other.chestPos())) {
 				return true;
 			}
 		}
 		return false;
-	}
-
-	@Nullable
-	private static BlockPos connectedChest(Level level, BlockPos pos) {
-		BlockState state = level.getBlockState(pos);
-		if (!(state.getBlock() instanceof ChestBlock) || state.getValue(ChestBlock.TYPE) == ChestType.SINGLE) {
-			return null;
-		}
-		return ChestBlock.getConnectedBlockPos(pos, state);
 	}
 
 	private void idleNearChest() {

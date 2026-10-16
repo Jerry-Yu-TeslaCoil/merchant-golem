@@ -3,7 +3,7 @@
 	"id": "trading_golem",
 	"version": "${version}",
 	"name": "交易傀儡",
-	"description": "在绿宝石块上放雕刻南瓜，召唤一个会把箱子里的货卖给村民的傀儡。它隔着交易大厅的格子交易，不用贴脸。",
+	"description": "绿宝石块上放南瓜召唤交易傀儡，小麦块上放南瓜召唤务农傀儡。挖掉对应的箱子，傀儡会消失。",
 	"authors": [],
 	"license": "MIT",
 	"icon": "assets/trading_golem/icon.png",

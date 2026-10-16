@@ -1,4 +1,8 @@
 {
+	"block.trading_golem.trading_chest": "Trading Chest",
+	"block.trading_golem.crop_chest": "Crop Chest",
 	"entity.trading_golem.trading_golem": "Trading Golem",
-	"item.trading_golem.trading_golem_spawn_egg": "Trading Golem Spawn Egg"
+	"entity.trading_golem.farming_golem": "Farming Golem",
+	"item.trading_golem.trading_golem_spawn_egg": "Trading Golem Spawn Egg",
+	"item.trading_golem.farming_golem_spawn_egg": "Farming Golem Spawn Egg"
 }
