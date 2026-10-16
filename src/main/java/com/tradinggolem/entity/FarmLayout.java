@@ -101,6 +101,29 @@ public final class FarmLayout {
 		}
 	}
 
+	/** 箱子这一层，和再往上的一层。这两层要空着，才种得下、走得过。 */
+	public static void forEachHeadroom(BlockPos chest, int layer, Consumer<BlockPos> consumer) {
+		BlockPos ground = ground(chest);
+		int dy = layer == 0 ? 1 : 2;
+		for (int dx = -DITCH_RADIUS; dx <= DITCH_RADIUS; dx++) {
+			for (int dz = -DITCH_RADIUS; dz <= DITCH_RADIUS; dz++) {
+				BlockPos pos = ground.offset(dx, dy, dz);
+				if (!pos.equals(chest)) {
+					consumer.accept(pos);
+				}
+			}
+		}
+	}
+
+	public static void forEachBridge(BlockPos chest, Consumer<BlockPos> consumer) {
+		BlockPos ground = ground(chest);
+		int radius = DITCH_RADIUS;
+		consumer.accept(ground.offset(radius, 0, 0));
+		consumer.accept(ground.offset(-radius, 0, 0));
+		consumer.accept(ground.offset(0, 0, radius));
+		consumer.accept(ground.offset(0, 0, -radius));
+	}
+
 	/** 四个角，水从这里流到过道跟前。 */
 	public static void forEachWaterCorner(BlockPos chest, Consumer<BlockPos> consumer) {
 		BlockPos ground = ground(chest);

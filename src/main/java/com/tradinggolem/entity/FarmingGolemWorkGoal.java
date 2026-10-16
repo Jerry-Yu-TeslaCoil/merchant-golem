@@ -144,7 +144,8 @@ public final class FarmingGolemWorkGoal extends Goal {
 			return false;
 		}
 		return switch (task.kind) {
-			case DIG -> stack.is(ItemTags.SHOVELS);
+			case DIG -> this.golem.level() instanceof ServerLevel server && this.canUseTool(stack, server.getBlockState(task.pos));
+			case FILL -> stack.is(Items.DIRT);
 			case WATER -> stack.is(Items.WATER_BUCKET);
 			case TILL -> stack.is(ItemTags.HOES);
 			case PLANT -> FarmCrops.isSeed(stack.getItem());
@@ -164,6 +165,7 @@ public final class FarmingGolemWorkGoal extends Goal {
 		this.lookAt(task.pos);
 		boolean done = switch (task.kind) {
 			case DIG -> this.dig(level, task.pos);
+			case FILL -> this.fill(level, task.pos);
 			case WATER -> this.pour(level, task.pos);
 			case TILL -> this.till(level, task.pos);
 			case PLANT -> this.plant(level, task.pos);
@@ -176,20 +178,35 @@ public final class FarmingGolemWorkGoal extends Goal {
 	}
 
 	private boolean dig(ServerLevel level, BlockPos pos) {
-		if (!this.golem.carried.is(ItemTags.SHOVELS)) {
-			return false;
-		}
-		BlockPos above = pos.above();
-		BlockState cover = level.getBlockState(above);
-		if (this.isClearableCover(level, above, cover)) {
-			this.breakBlock(level, above, this.golem.carried);
-		}
 		BlockState state = level.getBlockState(pos);
-		if (!this.canDig(level, pos, state)) {
+		if (!this.canUseTool(this.golem.carried, state) || !this.isDigTarget(level, pos, state)) {
 			return false;
+		}
+		BlockPos chest = this.golem.chestPos;
+		if (chest != null && pos.getY() == FarmLayout.ground(chest).getY()) {
+			BlockPos above = pos.above();
+			BlockState cover = level.getBlockState(above);
+			if (this.isClearableCover(level, above, cover) && !this.isKeptPlant(cover)) {
+				this.breakBlock(level, above, this.golem.carried);
+			}
+			state = level.getBlockState(pos);
+			if (!this.canUseTool(this.golem.carried, state) || !this.isDigTarget(level, pos, state)) {
+				return false;
+			}
 		}
 		this.breakBlock(level, pos, this.golem.carried);
 		this.golem.wearDownTool();
+		return true;
+	}
+
+	private boolean fill(ServerLevel level, BlockPos pos) {
+		if (!this.golem.carried.is(Items.DIRT) || !this.needsDirt(level, pos)) {
+			return false;
+		}
+		level.setBlock(pos, Blocks.DIRT.defaultBlockState(), Block.UPDATE_ALL);
+		level.playSound(null, pos, SoundEvents.GRAVEL_PLACE, SoundSource.BLOCKS, 1.0F, 0.8F);
+		this.golem.carried.shrink(1);
+		this.golem.setCarried(this.golem.carried.isEmpty() ? ItemStack.EMPTY : this.golem.carried);
 		return true;
 	}
 
@@ -297,20 +314,67 @@ public final class FarmingGolemWorkGoal extends Goal {
 		}
 	}
 
-	private boolean canDig(ServerLevel level, BlockPos pos, BlockState state) {
-		if (state.isAir() || this.isWater(state)) {
+	private boolean isDigTarget(ServerLevel level, BlockPos pos, BlockState state) {
+		if (state.isAir() || this.isWater(state) || !state.getFluidState().isEmpty()) {
 			return false;
 		}
 		if (state.getDestroySpeed(level, pos) < 0.0F) {
 			return false;
 		}
-		if (state.getBlock() instanceof BaseEntityBlock) {
+		if (state.getBlock() instanceof BaseEntityBlock || this.isKeptPlant(state)) {
 			return false;
 		}
-		if (this.golem.carried.isCorrectToolForDrops(state)) {
+		return true;
+	}
+
+	private boolean isKeptPlant(BlockState state) {
+		if (state.getBlock() instanceof CropBlock || FarmCrops.isMature(state)) {
 			return true;
 		}
-		return !state.requiresCorrectToolForDrops();
+		return state.is(Blocks.MELON_STEM)
+				|| state.is(Blocks.PUMPKIN_STEM)
+				|| state.is(Blocks.ATTACHED_MELON_STEM)
+				|| state.is(Blocks.ATTACHED_PUMPKIN_STEM)
+				|| state.is(Blocks.PITCHER_PLANT)
+				|| state.is(Blocks.TORCHFLOWER);
+	}
+
+	/** 铲子挖土和不用特定工具的方块，镐子挖石头。 */
+	private boolean canUseTool(ItemStack stack, BlockState state) {
+		if (!stack.is(ItemTags.SHOVELS) && !stack.is(ItemTags.PICKAXES)) {
+			return false;
+		}
+		if (state.requiresCorrectToolForDrops()) {
+			return stack.isCorrectToolForDrops(state);
+		}
+		return true;
+	}
+
+	private boolean toolAvailable(ServerLevel level, BlockPos chest, BlockState state) {
+		if (this.canUseTool(this.golem.carried, state)) {
+			return true;
+		}
+		Container container = CropStash.get(level, chest);
+		if (container == null) {
+			return false;
+		}
+		for (int slot = 0; slot < container.getContainerSize(); slot++) {
+			if (this.canUseTool(container.getItem(slot), state)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private boolean needsDirt(ServerLevel level, BlockPos pos) {
+		BlockState state = level.getBlockState(pos);
+		if (state.is(Blocks.DIRT) || state.is(Blocks.FARMLAND) || FarmCrops.isTillable(state)) {
+			return false;
+		}
+		if (state.isAir() || this.isWater(state) || !state.getFluidState().isEmpty()) {
+			return true;
+		}
+		return state.canBeReplaced() && state.getCollisionShape(level, pos).isEmpty() && !this.isKeptPlant(state);
 	}
 
 	private boolean isClearableCover(ServerLevel level, BlockPos pos, BlockState state) {
@@ -344,9 +408,16 @@ public final class FarmingGolemWorkGoal extends Goal {
 		if (harvest != null) {
 			return harvest;
 		}
-		BlockPos dig = this.findDitch(level, chest, true);
+		BlockPos dig = this.findDig(level, chest, true);
+		if (dig == null) {
+			dig = this.findDig(level, chest, false);
+		}
 		if (dig != null) {
 			return new Task(TaskKind.DIG, dig);
+		}
+		BlockPos fill = this.findFill(level, chest);
+		if (fill != null) {
+			return new Task(TaskKind.FILL, fill);
 		}
 		BlockPos water = this.findDitch(level, chest, false);
 		if (water != null) {
@@ -397,7 +468,117 @@ public final class FarmingGolemWorkGoal extends Goal {
 	}
 
 	@Nullable
+	private BlockPos findDig(ServerLevel level, BlockPos chest, boolean preferCarried) {
+		for (int layer = 1; layer >= 0; layer--) {
+			BlockPos headroom = this.nearestDig(level, chest, preferCarried, layer);
+			if (headroom != null) {
+				return headroom;
+			}
+		}
+		BlockPos ditch = this.findDitch(level, chest, true, preferCarried);
+		if (ditch != null) {
+			return ditch;
+		}
+		return this.nearestPlotObstacle(level, chest, preferCarried);
+	}
+
+	@Nullable
+	private BlockPos nearestDig(ServerLevel level, BlockPos chest, boolean preferCarried, int layer) {
+		BlockPos[] found = new BlockPos[1];
+		double[] best = {Double.MAX_VALUE};
+		FarmLayout.forEachHeadroom(chest, layer, pos -> {
+			if (!this.ready(pos) || !this.canTargetDig(level, chest, pos, preferCarried)) {
+				return;
+			}
+			double distance = this.golem.distanceToSqr(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5);
+			if (distance < best[0]) {
+				best[0] = distance;
+				found[0] = pos;
+			}
+		});
+		return found[0];
+	}
+
+	@Nullable
+	private BlockPos nearestPlotObstacle(ServerLevel level, BlockPos chest, boolean preferCarried) {
+		BlockPos[] found = new BlockPos[1];
+		double[] best = {Double.MAX_VALUE};
+		FarmLayout.forEachPlot(chest, plot -> {
+			BlockState soil = level.getBlockState(plot);
+			if (soil.is(Blocks.FARMLAND) || FarmCrops.isTillable(soil)) {
+				return;
+			}
+			if (!this.ready(plot) || !this.canTargetDig(level, chest, plot, preferCarried)) {
+				return;
+			}
+			double distance = this.golem.distanceToSqr(plot.getX() + 0.5, plot.getY(), plot.getZ() + 0.5);
+			if (distance < best[0]) {
+				best[0] = distance;
+				found[0] = plot;
+			}
+		});
+		return found[0];
+	}
+
+	private boolean canTargetDig(ServerLevel level, BlockPos chest, BlockPos pos, boolean preferCarried) {
+		BlockState state = level.getBlockState(pos);
+		if (!this.isDigTarget(level, pos, state)) {
+			return false;
+		}
+		if (preferCarried) {
+			return this.canUseTool(this.golem.carried, state);
+		}
+		return this.toolAvailable(level, chest, state);
+	}
+
+	@Nullable
+	private BlockPos findFill(ServerLevel level, BlockPos chest) {
+		BlockPos[] found = new BlockPos[1];
+		double[] best = {Double.MAX_VALUE};
+		java.util.function.Consumer<BlockPos> consider = pos -> {
+			if (found[0] != null && this.golem.distanceToSqr(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5) >= best[0]) {
+				return;
+			}
+			if (!this.ready(pos) || !this.needsDirt(level, pos)) {
+				return;
+			}
+			if (!this.golem.carried.is(Items.DIRT) && !this.chestHasDirt(level, chest)) {
+				return;
+			}
+			double distance = this.golem.distanceToSqr(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5);
+			if (distance < best[0]) {
+				best[0] = distance;
+				found[0] = pos;
+			}
+		};
+		FarmLayout.forEachDitch(chest, ditch -> consider.accept(ditch.below()));
+		FarmLayout.forEachPlot(chest, consider);
+		FarmLayout.forEachBridge(chest, consider);
+		BlockPos support = FarmLayout.ground(chest);
+		consider.accept(support);
+		return found[0];
+	}
+
+	private boolean chestHasDirt(ServerLevel level, BlockPos chest) {
+		Container container = CropStash.get(level, chest);
+		if (container == null) {
+			return false;
+		}
+		for (int slot = 0; slot < container.getContainerSize(); slot++) {
+			if (container.getItem(slot).is(Items.DIRT)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	@Nullable
 	private BlockPos findDitch(ServerLevel level, BlockPos chest, boolean digging) {
+		return this.findDitch(level, chest, digging, false);
+	}
+
+	@Nullable
+	private BlockPos findDitch(ServerLevel level, BlockPos chest, boolean digging, boolean preferCarried) {
 		if (!digging) {
 			BlockPos[] found = new BlockPos[1];
 			FarmLayout.forEachWaterCorner(chest, corner -> {
@@ -419,7 +600,7 @@ public final class FarmingGolemWorkGoal extends Goal {
 			if (!this.ready(pos)) {
 				continue;
 			}
-			if (this.canDig(level, pos, level.getBlockState(pos))) {
+			if (this.canTargetDig(level, chest, pos, preferCarried)) {
 				this.ringCursor = index;
 				return pos;
 			}
@@ -535,12 +716,28 @@ public final class FarmingGolemWorkGoal extends Goal {
 			return ItemStack.EMPTY;
 		}
 		return switch (task.kind) {
-			case DIG -> ChestStash.extractMatching(container, stack -> stack.is(ItemTags.SHOVELS));
+			case DIG -> this.takeDigTool(container, task);
+			case FILL -> ChestStash.extract(container, Items.DIRT, 64);
 			case WATER -> ChestStash.extractMatching(container, stack -> stack.is(Items.WATER_BUCKET));
 			case TILL -> ChestStash.extractMatching(container, stack -> stack.is(ItemTags.HOES));
 			case PLANT -> this.takeRandomSeed(container, task);
 			case HARVEST -> ItemStack.EMPTY;
 		};
+	}
+
+	private ItemStack takeDigTool(Container container, Task task) {
+		if (!(this.golem.level() instanceof ServerLevel level)) {
+			return ItemStack.EMPTY;
+		}
+		BlockState state = level.getBlockState(task.pos);
+		if (state.requiresCorrectToolForDrops()) {
+			return ChestStash.extractMatching(container, stack -> this.canUseTool(stack, state));
+		}
+		ItemStack shovel = ChestStash.extractMatching(container, stack -> stack.is(ItemTags.SHOVELS));
+		if (!shovel.isEmpty()) {
+			return shovel;
+		}
+		return ChestStash.extractMatching(container, stack -> stack.is(ItemTags.PICKAXES));
 	}
 
 	private ItemStack takeRandomSeed(Container container, Task task) {
@@ -669,6 +866,14 @@ public final class FarmingGolemWorkGoal extends Goal {
 	}
 
 	private BlockPos feetPos(ServerLevel level, BlockPos chest, BlockPos work) {
+		if (work.getY() < FarmLayout.ground(chest).getY()) {
+			int dx = Integer.signum(chest.getX() - work.getX());
+			int dz = Integer.signum(chest.getZ() - work.getZ());
+			BlockPos bank = new BlockPos(work.getX() + dx, chest.getY(), work.getZ() + dz);
+			if (this.standable(level, bank)) {
+				return bank;
+			}
+		}
 		if (work.getY() > chest.getY() && this.standable(level, work)) {
 			return work;
 		}
@@ -705,7 +910,7 @@ public final class FarmingGolemWorkGoal extends Goal {
 	}
 
 	private enum TaskKind {
-		HARVEST, DIG, WATER, TILL, PLANT
+		HARVEST, DIG, FILL, WATER, TILL, PLANT
 	}
 
 	private record Task(TaskKind kind, BlockPos pos) {
