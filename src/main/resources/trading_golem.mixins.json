@@ -3,7 +3,9 @@
 	"package": "com.tradinggolem.mixin",
 	"compatibilityLevel": "JAVA_25",
 	"mixins": [
+		"ArrowDamageAccess",
 		"CarvedPumpkinBlockMixin",
+		"IronGolemMixin",
 		"VillagerMixin"
 	],
 	"injectors": {

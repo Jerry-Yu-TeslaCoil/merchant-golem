@@ -10,6 +10,8 @@
 	"gui.trading_golem.soldier.info": "信息",
 	"gui.trading_golem.soldier.orders": "指令",
 	"gui.trading_golem.soldier.inventory": "物品栏",
+	"gui.trading_golem.soldier.rank": "等级：%s",
+	"gui.trading_golem.soldier.rank_progress": "等级：%s（%s/%s）",
 	"gui.trading_golem.soldier.lord": "领主：%s",
 	"gui.trading_golem.soldier.lord_unknown": "未知",
 	"gui.trading_golem.soldier.demands": "需求",
