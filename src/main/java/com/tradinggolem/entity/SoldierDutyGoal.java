@@ -35,6 +35,7 @@ import net.minecraft.world.item.component.SwingAnimation;
 import net.minecraft.world.item.enchantment.ItemEnchantments;
 import net.minecraft.world.item.equipment.Equippable;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.EnumSet;
@@ -44,7 +45,8 @@ import java.util.function.Predicate;
 
 /**
  * Leaves camp for patrol, follow, or an alert. Takes the best gear first.
- * Retreat, mounted shooting, and the spear charge come later.
+ * Locked ranged keeps its distance, a mounted archer shoots while backing up,
+ * and a mounted spear charges once before settling into melee.
  */
 public final class SoldierDutyGoal extends Goal {
 	static final double ALERT_RANGE = 12.0;
@@ -55,7 +57,10 @@ public final class SoldierDutyGoal extends Goal {
 	private static final double FOLLOW_DEFEND_LEASH = 32.0;
 	private static final double FOLLOW_GAP = 4.0;
 	private static final double FREE_MELEE = 4.0;
+	private static final double RANGED_RESUME = 7.0;
+	private static final double MOUNTED_REVERSE = 12.0;
 	private static final double BOW_RANGE = 15.0;
+	private static final double CHARGE_REACH = 4.0;
 	private static final int ARROW_TARGET = 64;
 
 	private final Soldier soldier;
@@ -68,6 +73,11 @@ public final class SoldierDutyGoal extends Goal {
 	private boolean mountSkipped;
 	@Nullable
 	private UUID focus;
+	/** Locked ranged is backing up until the target is 7 blocks away. */
+	private boolean backing;
+	private boolean chargeLanded;
+	@Nullable
+	private UUID chargeTarget;
 	/** Patrol came back because both weapons were gone. Each kind is tried once. */
 	private boolean resupplying;
 	private boolean triedMelee;
@@ -118,6 +128,9 @@ public final class SoldierDutyGoal extends Goal {
 		this.stocked = false;
 		this.stockedOrder = null;
 		this.focus = null;
+		this.backing = false;
+		this.chargeLanded = false;
+		this.chargeTarget = null;
 		this.patrolTicks = 0;
 		this.attackCooldown = 0;
 		this.mountSkipped = false;
@@ -196,7 +209,7 @@ public final class SoldierDutyGoal extends Goal {
 	private void act(ServerLevel level, BlockPos chestPos, SoldierChestBlockEntity chest) {
 		SoldierOrder order = chest.order();
 		if (this.soldier.alerting() && (order == SoldierOrder.REST || order == SoldierOrder.PATROL)) {
-			LivingEntity threat = this.sticky(level, chestPos.getX() + 0.5, chestPos.getY() + 0.5, chestPos.getZ() + 0.5, ALERT_RANGE);
+			LivingEntity threat = this.engage(level, chest, chestPos.getX() + 0.5, chestPos.getY() + 0.5, chestPos.getZ() + 0.5, ALERT_RANGE, chest.weaponMode());
 			if (threat != null) {
 				this.combat(level, threat, chest.weaponMode());
 				return;
@@ -209,7 +222,7 @@ public final class SoldierDutyGoal extends Goal {
 			}
 		}
 		switch (order) {
-			case PATROL -> this.patrol(level, chestPos, chest.weaponMode());
+			case PATROL -> this.patrol(level, chestPos, chest);
 			case FOLLOW_DEFEND -> this.follow(level, chest, true);
 			case FOLLOW_ATTACK -> this.follow(level, chest, false);
 			default -> {
@@ -220,18 +233,18 @@ public final class SoldierDutyGoal extends Goal {
 		}
 	}
 
-	private void patrol(ServerLevel level, BlockPos chest, SoldierWeaponMode mode) {
-		LivingEntity threat = this.sticky(level, this.soldier.getX(), this.soldier.getY(), this.soldier.getZ(), PATROL_SIGHT);
-		if (threat != null && threat.distanceToSqr(chest.getX() + 0.5, chest.getY() + 0.5, chest.getZ() + 0.5) <= PATROL_LEASH * PATROL_LEASH) {
-			this.combat(level, threat, mode);
+	private void patrol(ServerLevel level, BlockPos chestPos, SoldierChestBlockEntity chest) {
+		LivingEntity threat = this.engage(level, chest, this.soldier.getX(), this.soldier.getY(), this.soldier.getZ(), PATROL_SIGHT, chest.weaponMode());
+		if (threat != null && threat.distanceToSqr(chestPos.getX() + 0.5, chestPos.getY() + 0.5, chestPos.getZ() + 0.5) <= PATROL_LEASH * PATROL_LEASH) {
+			this.combat(level, threat, chest.weaponMode());
 			return;
 		}
 		this.focus = null;
 		this.soldier.setTarget(null);
 		this.soldier.stopUsingItem();
 		double angle = this.waypoint * (Math.PI / 4.0);
-		double x = chest.getX() + 0.5 + Math.cos(angle) * PATROL_RADIUS;
-		double z = chest.getZ() + 0.5 + Math.sin(angle) * PATROL_RADIUS;
+		double x = chestPos.getX() + 0.5 + Math.cos(angle) * PATROL_RADIUS;
+		double z = chestPos.getZ() + 0.5 + Math.sin(angle) * PATROL_RADIUS;
 		double dx = this.soldier.getX() - x;
 		double dz = this.soldier.getZ() - z;
 		if (dx * dx + dz * dz <= 4.0 || this.patrolTicks > 160) {
@@ -240,7 +253,7 @@ public final class SoldierDutyGoal extends Goal {
 			return;
 		}
 		this.patrolTicks++;
-		this.walkTo(x, chest.getY(), z);
+		this.walkTo(x, chestPos.getY(), z);
 	}
 
 	private void follow(ServerLevel level, SoldierChestBlockEntity chest, boolean defend) {
@@ -250,8 +263,8 @@ public final class SoldierDutyGoal extends Goal {
 			return;
 		}
 		LivingEntity target = defend
-			? this.defendTarget(lord)
-			: this.sticky(level, lord.getX(), lord.getY(), lord.getZ(), FOLLOW_ATTACK_RANGE);
+			? this.defendTarget(lord, chest.weaponMode())
+			: this.engage(level, chest, lord.getX(), lord.getY(), lord.getZ(), FOLLOW_ATTACK_RANGE, chest.weaponMode());
 		if (target != null) {
 			this.combat(level, target, chest.weaponMode());
 			return;
@@ -267,8 +280,11 @@ public final class SoldierDutyGoal extends Goal {
 	}
 
 	@Nullable
-	private LivingEntity defendTarget(ServerPlayer lord) {
+	private LivingEntity defendTarget(ServerPlayer lord, SoldierWeaponMode mode) {
 		LivingEntity target = lord.getLastHurtMob();
+		if (target instanceof Creeper creeper) {
+			return this.assistCreeper(lord, creeper, mode);
+		}
 		if (!this.canAssist(lord, target)) {
 			this.focus = null;
 			return null;
@@ -293,17 +309,121 @@ public final class SoldierDutyGoal extends Goal {
 		return target != lord && target != this.soldier && target != this.soldier.getVehicle();
 	}
 
+	@Nullable
+	private LivingEntity assistCreeper(ServerPlayer lord, Creeper creeper, SoldierWeaponMode mode) {
+		if (!this.mayShootCreeper(mode) || !creeper.isAlive()) {
+			this.focus = null;
+			return null;
+		}
+		boolean engaged = creeper.getUUID().equals(this.focus);
+		int age = lord.tickCount - lord.getLastHurtMobTimestamp();
+		if (!engaged && age > 100) {
+			return null;
+		}
+		if (creeper.distanceToSqr(lord) > FOLLOW_DEFEND_LEASH * FOLLOW_DEFEND_LEASH) {
+			this.focus = null;
+			return null;
+		}
+		this.focus = creeper.getUUID();
+		return creeper;
+	}
+
+	/** Normal monsters first. A creeper counts only after the lord has hit it, and only for a bow. */
+	@Nullable
+	private LivingEntity engage(ServerLevel level, SoldierChestBlockEntity chest, double x, double y, double z, double radius, SoldierWeaponMode mode) {
+		UUID kept = this.focus;
+		LivingEntity threat = this.sticky(level, x, y, z, radius);
+		if (threat != null) {
+			return threat;
+		}
+		if (this.keptCreeper(level, kept, x, y, z, radius, mode) instanceof Creeper held) {
+			return held;
+		}
+		return this.freshCreeper(level, chest, x, y, z, radius, mode);
+	}
+
+	@Nullable
+	private Creeper keptCreeper(ServerLevel level, @Nullable UUID id, double x, double y, double z, double radius, SoldierWeaponMode mode) {
+		if (id == null || !this.mayShootCreeper(mode) || !(level.getEntity(id) instanceof Creeper creeper) || !creeper.isAlive()) {
+			return null;
+		}
+		if (creeper.distanceToSqr(x, y, z) > radius * radius) {
+			return null;
+		}
+		this.focus = creeper.getUUID();
+		return creeper;
+	}
+
+	@Nullable
+	private Creeper freshCreeper(ServerLevel level, SoldierChestBlockEntity chest, double x, double y, double z, double radius, SoldierWeaponMode mode) {
+		ServerPlayer lord = this.lord(level, chest);
+		if (lord == null || !this.mayShootCreeper(mode) || !(lord.getLastHurtMob() instanceof Creeper creeper) || !creeper.isAlive()) {
+			return null;
+		}
+		if (lord.tickCount - lord.getLastHurtMobTimestamp() > 100) {
+			return null;
+		}
+		if (creeper.distanceToSqr(x, y, z) > radius * radius) {
+			return null;
+		}
+		this.focus = creeper.getUUID();
+		return creeper;
+	}
+
+	private boolean mayShootCreeper(SoldierWeaponMode mode) {
+		return mode != SoldierWeaponMode.MELEE && this.bestCarried(this::isRanged) != null && this.arrowStack() != null;
+	}
+
 	private void combat(ServerLevel level, LivingEntity target, SoldierWeaponMode mode) {
 		this.soldier.setTarget(target);
 		this.soldier.getLookControl().setLookAt(target, 30.0F, 30.0F);
-		boolean ranged = this.wantsRanged(mode, target);
-		this.arm(ranged);
-		if (ranged) {
-			this.shoot(level, target);
+		if (this.chargeTarget == null || !this.chargeTarget.equals(target.getUUID())) {
+			this.chargeTarget = target.getUUID();
+			this.chargeLanded = false;
+			this.backing = false;
+		}
+		boolean creeper = target instanceof Creeper;
+		if (creeper && !this.mayShootCreeper(mode)) {
+			this.soldier.stopUsingItem();
+			this.soldier.setTarget(null);
+			this.focus = null;
+			this.halt();
 			return;
 		}
-		this.soldier.stopUsingItem();
-		this.melee(level, target);
+		boolean ranged = creeper || this.wantsRanged(mode, target);
+		this.arm(ranged);
+		if (!ranged) {
+			this.backing = false;
+			this.melee(level, target);
+			return;
+		}
+		if (mode == SoldierWeaponMode.RANGED && this.soldier.isPassenger()) {
+			this.backing = false;
+			this.reverseShoot(level, target);
+			return;
+		}
+		if (mode == SoldierWeaponMode.RANGED && this.keepDistance(target)) {
+			return;
+		}
+		this.shoot(level, target);
+	}
+
+	/** Locked ranged backs up after a monster steps inside 4 blocks, and shoots again at 7. */
+	private boolean keepDistance(LivingEntity target) {
+		double distance = this.soldier.distanceTo(target);
+		if (distance < FREE_MELEE) {
+			this.backing = true;
+		}
+		if (!this.backing) {
+			return false;
+		}
+		if (distance < RANGED_RESUME) {
+			this.soldier.stopUsingItem();
+			this.away(target, 6.0);
+			return true;
+		}
+		this.backing = false;
+		return false;
 	}
 
 	private boolean wantsRanged(SoldierWeaponMode mode, LivingEntity target) {
@@ -320,6 +440,10 @@ public final class SoldierDutyGoal extends Goal {
 	}
 
 	private void melee(ServerLevel level, LivingEntity target) {
+		if (this.spearCharge(level, target)) {
+			return;
+		}
+		this.soldier.stopUsingItem();
 		if (this.attackCooldown > 0) {
 			this.attackCooldown--;
 		}
@@ -337,14 +461,83 @@ public final class SoldierDutyGoal extends Goal {
 		this.attackCooldown = 20;
 	}
 
+	/**
+	 * One mounted spear impact. It does not use the spear's charge window: a monster in front, within reach, is hit and shoved.
+	 * Later swings are ordinary melee.
+	 */
+	private boolean spearCharge(ServerLevel level, LivingEntity target) {
+		if (!(this.soldier.getVehicle() instanceof AbstractHorse) || !this.soldier.getMainHandItem().is(ItemTags.SPEARS)) {
+			return false;
+		}
+		if (this.chargeLanded) {
+			return false;
+		}
+		if (!this.chargeReach(target)) {
+			this.walkTo(target.getX(), target.getY(), target.getZ());
+			return true;
+		}
+		this.halt();
+		this.soldier.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, true);
+		if (!this.soldier.doHurtTarget(level, target)) {
+			return true;
+		}
+		double dx = this.soldier.getX() - target.getX();
+		double dz = this.soldier.getZ() - target.getZ();
+		if (dx * dx + dz * dz < 1.0E-4) {
+			Vec3 look = this.soldier.getLookAngle();
+			dx = -look.x;
+			dz = -look.z;
+		}
+		target.knockback(0.6, dx, dz, this.soldier.damageSources().mobAttack(this.soldier), 0.4F);
+		this.chargeLanded = true;
+		this.attackCooldown = 10;
+		return true;
+	}
+
+	private boolean chargeReach(LivingEntity target) {
+		double dx = target.getX() - this.soldier.getX();
+		double dz = target.getZ() - this.soldier.getZ();
+		if (dx * dx + dz * dz > CHARGE_REACH * CHARGE_REACH || Math.abs(target.getY() - this.soldier.getY()) > 2.0) {
+			return false;
+		}
+		double horizontal = Math.sqrt(dx * dx + dz * dz);
+		if (horizontal < 0.5) {
+			return true;
+		}
+		Vec3 look = this.soldier.getLookAngle();
+		return (look.x * dx + look.z * dz) / horizontal > 0.3;
+	}
+
 	private void shoot(ServerLevel level, LivingEntity target) {
-		boolean sees = this.soldier.getSensing().hasLineOfSight(target);
-		if (this.soldier.distanceTo(target) > BOW_RANGE || !sees) {
+		if (!this.inBowRange(target)) {
 			this.soldier.stopUsingItem();
 			this.walkTo(target.getX(), target.getY(), target.getZ());
 			return;
 		}
 		this.halt();
+		this.release(level, target);
+	}
+
+	/** Look stays on the monster. Inside 12 blocks the horse keeps moving away while the bow fires. */
+	private void reverseShoot(ServerLevel level, LivingEntity target) {
+		if (!this.inBowRange(target)) {
+			this.soldier.stopUsingItem();
+			this.walkTo(target.getX(), target.getY(), target.getZ());
+			return;
+		}
+		if (this.soldier.distanceTo(target) < MOUNTED_REVERSE) {
+			this.away(target, 6.0);
+		} else {
+			this.halt();
+		}
+		this.release(level, target);
+	}
+
+	private boolean inBowRange(LivingEntity target) {
+		return this.soldier.distanceTo(target) <= BOW_RANGE && this.soldier.getSensing().hasLineOfSight(target);
+	}
+
+	private void release(ServerLevel level, LivingEntity target) {
 		ItemStack weapon = this.soldier.getMainHandItem();
 		if (!this.isRanged(weapon)) {
 			return;
@@ -357,6 +550,18 @@ public final class SoldierDutyGoal extends Goal {
 		}
 		this.fire(level, target, weapon);
 		this.soldier.stopUsingItem();
+	}
+
+	private void away(LivingEntity target, double blocks) {
+		double dx = this.soldier.getX() - target.getX();
+		double dz = this.soldier.getZ() - target.getZ();
+		double length = Math.sqrt(dx * dx + dz * dz);
+		if (length < 1.0E-4) {
+			dx = 1.0;
+			dz = 0.0;
+			length = 1.0;
+		}
+		this.walkTo(this.soldier.getX() + dx / length * blocks, this.soldier.getY(), this.soldier.getZ() + dz / length * blocks);
 	}
 
 	private void fire(ServerLevel level, LivingEntity target, ItemStack weapon) {

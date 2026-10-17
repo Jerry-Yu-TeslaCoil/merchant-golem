@@ -66,6 +66,11 @@ public class Soldier extends Villager implements net.minecraft.world.entity.Cont
 	/** A villager is hungry while this is below 12. */
 	private static final int FOOD_FULL = 12;
 	private int eatDelay;
+	/**
+	 * ShowTradesToPlayer clears the main hand whenever a player stands close and is not holding a trade item.
+	 * That runs after the soldier goals and drops the only reference to the weapon.
+	 */
+	private boolean villagerBrain;
 
 	public Soldier(EntityType<? extends Soldier> type, Level level) {
 		super(type, level);
@@ -94,7 +99,14 @@ public class Soldier extends Villager implements net.minecraft.world.entity.Cont
 
 	@Override
 	protected void customServerAiStep(ServerLevel level) {
-		super.customServerAiStep(level);
+		float mainDrop = this.getDropChances().byEquipment(EquipmentSlot.MAINHAND);
+		this.villagerBrain = true;
+		try {
+			super.customServerAiStep(level);
+		} finally {
+			this.villagerBrain = false;
+		}
+		this.setDropChance(EquipmentSlot.MAINHAND, mainDrop);
 		boolean near = false;
 		if (this.chestPos != null && level.isLoaded(this.chestPos) && level.getBlockEntity(this.chestPos) instanceof SoldierChestBlockEntity chest && chest.campCompleted()) {
 			SoldierOrder order = chest.order();
@@ -108,6 +120,14 @@ public class Soldier extends Villager implements net.minecraft.world.entity.Cont
 			this.alertHold--;
 		}
 		this.eat();
+	}
+
+	@Override
+	public void setItemSlot(EquipmentSlot slot, ItemStack stack) {
+		if (this.villagerBrain) {
+			return;
+		}
+		super.setItemSlot(slot, stack);
 	}
 
 	/**
