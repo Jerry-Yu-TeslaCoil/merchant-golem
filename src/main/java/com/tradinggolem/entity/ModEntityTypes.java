@@ -20,6 +20,15 @@ public final class ModEntityTypes {
 					.clientTrackingRange(10)
 					.build(key("trading_golem"))
 	);
+	public static final EntityType<Soldier> SOLDIER = Registry.register(
+			BuiltInRegistries.ENTITY_TYPE,
+			key("soldier"),
+			EntityType.Builder.of(Soldier::new, MobCategory.MISC)
+					.sized(0.6F, 1.95F)
+					.eyeHeight(1.62F)
+					.clientTrackingRange(10)
+					.build(key("soldier"))
+	);
 	public static final EntityType<FarmingGolem> FARMING_GOLEM = Registry.register(
 			BuiltInRegistries.ENTITY_TYPE,
 			key("farming_golem"),
@@ -41,5 +50,6 @@ public final class ModEntityTypes {
 	public static void register() {
 		FabricDefaultAttributeRegistry.register(TRADING_GOLEM, TradingGolem.createAttributes());
 		FabricDefaultAttributeRegistry.register(FARMING_GOLEM, FarmingGolem.createAttributes());
+		FabricDefaultAttributeRegistry.register(SOLDIER, Soldier.createAttributes());
 	}
 }

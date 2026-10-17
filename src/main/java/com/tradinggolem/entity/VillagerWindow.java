@@ -2,6 +2,7 @@ package com.tradinggolem.entity;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.npc.villager.Villager;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.CarpetBlock;
@@ -41,16 +42,16 @@ final class VillagerWindow {
 		return window.withinReach(x, y, z) && window.inFront(villager, x, z);
 	}
 
-	static List<BlockPos> stands(Level level, Villager villager, TradingGolem golem) {
+	static List<BlockPos> stands(Level level, Villager villager, Entity shopper) {
 		BlockPos origin = villager.blockPosition();
-		VillagerWindow window = find(level, villager, golem.getX(), golem.getZ());
+		VillagerWindow window = find(level, villager, shopper.getX(), shopper.getZ());
 		List<BlockPos> stands = new ArrayList<>();
 		if (window != null && window.locked) {
 			collectLockedStands(level, villager, origin, window, stands);
 		} else {
 			collectOpenStands(level, villager, origin, stands);
 		}
-		stands.sort(Comparator.comparingDouble(pos -> golem.distanceToSqr(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5)));
+		stands.sort(Comparator.comparingDouble(pos -> shopper.distanceToSqr(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5)));
 		if (stands.size() > 8) {
 			return new ArrayList<>(stands.subList(0, 8));
 		}
