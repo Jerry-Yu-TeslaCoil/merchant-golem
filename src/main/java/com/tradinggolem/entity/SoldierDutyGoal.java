@@ -1,6 +1,7 @@
 package com.tradinggolem.entity;
 
 import com.tradinggolem.block.SoldierChestBlockEntity;
+import com.tradinggolem.mixin.ArrowDamageAccess;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -15,6 +16,7 @@ import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.animal.golem.IronGolem;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.entity.animal.equine.AbstractHorse;
@@ -35,6 +37,7 @@ import net.minecraft.world.item.component.SwingAnimation;
 import net.minecraft.world.item.enchantment.ItemEnchantments;
 import net.minecraft.world.item.equipment.Equippable;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
 
@@ -303,7 +306,7 @@ public final class SoldierDutyGoal extends Goal {
 	}
 
 	private boolean canAssist(ServerPlayer lord, @Nullable LivingEntity target) {
-		if (target == null || !target.isAlive() || target instanceof Creeper) {
+		if (target == null || !target.isAlive() || target instanceof Creeper || target instanceof IronGolem) {
 			return false;
 		}
 		return target != lord && target != this.soldier && target != this.soldier.getVehicle();
@@ -375,6 +378,12 @@ public final class SoldierDutyGoal extends Goal {
 	}
 
 	private void combat(ServerLevel level, LivingEntity target, SoldierWeaponMode mode) {
+		if (target instanceof IronGolem) {
+			this.soldier.setTarget(null);
+			this.focus = null;
+			this.soldier.stopUsingItem();
+			return;
+		}
 		this.soldier.setTarget(target);
 		this.soldier.getLookControl().setLookAt(target, 30.0F, 30.0F);
 		if (this.chargeTarget == null || !this.chargeTarget.equals(target.getUUID())) {
@@ -397,6 +406,7 @@ public final class SoldierDutyGoal extends Goal {
 			this.melee(level, target);
 			return;
 		}
+		this.lowerShield();
 		if (mode == SoldierWeaponMode.RANGED && this.soldier.isPassenger()) {
 			this.backing = false;
 			this.reverseShoot(level, target);
@@ -443,22 +453,48 @@ public final class SoldierDutyGoal extends Goal {
 		if (this.spearCharge(level, target)) {
 			return;
 		}
-		this.soldier.stopUsingItem();
+		if (this.soldier.isUsingItem() && this.soldier.getUsedItemHand() == InteractionHand.MAIN_HAND) {
+			this.soldier.stopUsingItem();
+		}
 		if (this.attackCooldown > 0) {
 			this.attackCooldown--;
 		}
 		double reach = this.soldier.isPassenger() ? 3.5 : 2.5;
 		if (this.soldier.distanceToSqr(target) > reach * reach) {
+			this.guard();
 			this.walkTo(target.getX(), target.getY(), target.getZ());
 			return;
 		}
 		this.halt();
 		if (this.attackCooldown > 0) {
+			this.guard();
 			return;
 		}
+		this.lowerShield();
 		this.soldier.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, true);
 		this.soldier.doHurtTarget(level, target);
-		this.attackCooldown = 20;
+		this.attackCooldown = this.soldier.attackInterval();
+	}
+
+	/** Offhand shield stays up only while the next swing is still on cooldown. */
+	private void guard() {
+		if (this.attackCooldown <= 0 || !this.soldier.getOffhandItem().has(DataComponents.BLOCKS_ATTACKS)) {
+			this.lowerShield();
+			return;
+		}
+		if (this.soldier.isUsingItem() && this.soldier.getUsedItemHand() == InteractionHand.OFF_HAND) {
+			return;
+		}
+		if (this.soldier.isUsingItem()) {
+			this.soldier.stopUsingItem();
+		}
+		this.soldier.startUsingItem(InteractionHand.OFF_HAND);
+	}
+
+	private void lowerShield() {
+		if (this.soldier.isUsingItem() && this.soldier.getUsedItemHand() == InteractionHand.OFF_HAND) {
+			this.soldier.stopUsingItem();
+		}
 	}
 
 	/**
@@ -473,10 +509,12 @@ public final class SoldierDutyGoal extends Goal {
 			return false;
 		}
 		if (!this.chargeReach(target)) {
+			this.guard();
 			this.walkTo(target.getX(), target.getY(), target.getZ());
 			return true;
 		}
 		this.halt();
+		this.lowerShield();
 		this.soldier.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, true);
 		if (!this.soldier.doHurtTarget(level, target)) {
 			return true;
@@ -548,7 +586,9 @@ public final class SoldierDutyGoal extends Goal {
 		if (this.soldier.getTicksUsingItem() < 20) {
 			return;
 		}
-		this.fire(level, target, weapon);
+		if (!this.fire(level, target, weapon)) {
+			return;
+		}
 		this.soldier.stopUsingItem();
 	}
 
@@ -564,19 +604,38 @@ public final class SoldierDutyGoal extends Goal {
 		this.walkTo(this.soldier.getX() + dx / length * blocks, this.soldier.getY(), this.soldier.getZ() + dz / length * blocks);
 	}
 
-	private void fire(ServerLevel level, LivingEntity target, ItemStack weapon) {
+	/** False when the bow stays drawn: no arrow, or another living thing is in the way. */
+	private boolean fire(ServerLevel level, LivingEntity target, ItemStack weapon) {
 		ItemStack ammo = this.arrowStack();
-		if (ammo == null || ammo.isEmpty()) {
-			return;
+		if (ammo == null || ammo.isEmpty() || !this.clearShot(target)) {
+			return false;
 		}
 		AbstractArrow arrow = ProjectileUtil.getMobArrow(this.soldier, ammo.copyWithCount(1), BowItem.getPowerForTime(20), weapon);
 		double dx = target.getX() - this.soldier.getX();
 		double dy = target.getY(0.3333333333333333) - arrow.getY();
 		double dz = target.getZ() - this.soldier.getZ();
 		double horiz = Math.sqrt(dx * dx + dz * dz);
-		Projectile.spawnProjectileUsingShoot(arrow, level, weapon, dx, dy + horiz * 0.2, dz, 1.6F, 1.0F);
+		arrow.setBaseDamage(((ArrowDamageAccess) arrow).tradingGolem$getBaseDamage() + this.soldier.damageBonus());
+		Projectile.spawnProjectileUsingShoot(arrow, level, weapon, dx, dy + horiz * 0.2, dz, 1.6F, this.soldier.bowSpread());
 		ammo.shrink(1);
 		this.soldier.playSound(SoundEvents.ARROW_SHOOT, 1.0F, 1.0F);
+		return true;
+	}
+
+	/** Hold the shot while any other living thing stands on the line to the target. */
+	private boolean clearShot(LivingEntity target) {
+		Vec3 from = this.soldier.getEyePosition();
+		Vec3 to = new Vec3(target.getX(), target.getY(0.3333333333333333), target.getZ());
+		AABB box = this.soldier.getBoundingBox().expandTowards(to.subtract(from)).inflate(1.0);
+		EntityHitResult hit = ProjectileUtil.getEntityHitResult(
+			this.soldier,
+			from,
+			to,
+			box,
+			entity -> entity instanceof LivingEntity living && living.isAlive() && living != this.soldier.getVehicle(),
+			from.distanceToSqr(to)
+		);
+		return hit == null || hit.getEntity() == target;
 	}
 
 	private void arm(boolean ranged) {
@@ -641,6 +700,7 @@ public final class SoldierDutyGoal extends Goal {
 		if (this.bestCarried(this::isRanged) != null) {
 			this.pullArrows(level, chest);
 		}
+		this.takeBest(level, chest, this::isShield, EquipmentSlot.OFFHAND);
 		this.soldier.closeChest();
 		return true;
 	}
@@ -949,6 +1009,10 @@ public final class SoldierDutyGoal extends Goal {
 		return stack.is(Items.BOW);
 	}
 
+	private boolean isShield(ItemStack stack) {
+		return stack.has(DataComponents.BLOCKS_ATTACKS);
+	}
+
 	@Nullable
 	private EquipmentSlot armorSlot(ItemStack stack) {
 		Equippable equippable = stack.get(DataComponents.EQUIPPABLE);
@@ -1041,6 +1105,9 @@ public final class SoldierDutyGoal extends Goal {
 		}
 		if (this.bestCarried(this::isRanged) != null) {
 			this.pullArrows(level, chest);
+		}
+		if (this.bestCarried(this::isShield) == null && this.chestHas(chest, this::isShield)) {
+			this.takeBest(level, chest, this::isShield, EquipmentSlot.OFFHAND);
 		}
 		this.soldier.closeChest();
 		return true;

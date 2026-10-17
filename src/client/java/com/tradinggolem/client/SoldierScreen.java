@@ -5,6 +5,7 @@ import com.tradinggolem.entity.SoldierOrder;
 import com.tradinggolem.entity.SoldierWeaponMode;
 import com.tradinggolem.menu.SoldierMenu;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.world.entity.npc.villager.VillagerData;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.client.renderer.RenderPipelines;
@@ -62,13 +63,14 @@ public class SoldierScreen extends AbstractContainerScreen<SoldierMenu> {
 					? Component.translatable("gui.trading_golem.soldier.lord_unknown")
 					: Component.literal(this.menu.lordName());
 			graphics.text(this.font, Component.translatable("gui.trading_golem.soldier.lord", lord), 8, 32, TEXT, false);
-			graphics.text(this.font, Component.translatable("gui.trading_golem.soldier.demands"), 8, 52, TEXT, false);
+			graphics.text(this.font, this.rankLine(), 8, 44, TEXT, false);
+			graphics.text(this.font, Component.translatable("gui.trading_golem.soldier.demands"), 8, 58, TEXT, false);
 			var lines = this.menu.demandLines();
 			if (lines.isEmpty()) {
-				graphics.text(this.font, Component.translatable("gui.trading_golem.soldier.demands_empty"), 8, 66, TEXT, false);
+				graphics.text(this.font, Component.translatable("gui.trading_golem.soldier.demands_empty"), 8, 72, TEXT, false);
 			} else {
 				for (int i = 0; i < lines.size() && i < 8; i++) {
-					graphics.text(this.font, lines.get(i), 8, 66 + i * 12, TEXT, false);
+					graphics.text(this.font, lines.get(i), 8, 72 + i * 12, TEXT, false);
 				}
 			}
 		}
@@ -108,6 +110,15 @@ public class SoldierScreen extends AbstractContainerScreen<SoldierMenu> {
 		this.orderButton.setMessage(Component.translatable("gui.trading_golem.soldier.order", label(this.menu.order())));
 		this.weaponButton.setMessage(Component.translatable("gui.trading_golem.soldier.weapon", label(this.menu.weaponMode())));
 		this.rideButton.setMessage(Component.translatable("gui.trading_golem.soldier.ride", Component.translatable(this.menu.ride() ? "gui.trading_golem.soldier.ride.on" : "gui.trading_golem.soldier.ride.off")));
+	}
+
+	private Component rankLine() {
+		int rank = this.menu.rank();
+		Component name = Component.translatable("merchant.level." + rank);
+		if (!VillagerData.canLevelUp(rank)) {
+			return Component.translatable("gui.trading_golem.soldier.rank", name);
+		}
+		return Component.translatable("gui.trading_golem.soldier.rank_progress", name, this.menu.xp(), VillagerData.getMaxXpPerLevel(rank));
 	}
 
 	private static Component label(SoldierOrder order) {

@@ -10,6 +10,8 @@
 	"gui.trading_golem.soldier.info": "Info",
 	"gui.trading_golem.soldier.orders": "Orders",
 	"gui.trading_golem.soldier.inventory": "Inventory",
+	"gui.trading_golem.soldier.rank": "Level: %s",
+	"gui.trading_golem.soldier.rank_progress": "Level: %s (%s/%s)",
 	"gui.trading_golem.soldier.lord": "Lord: %s",
 	"gui.trading_golem.soldier.lord_unknown": "Unknown",
 	"gui.trading_golem.soldier.demands": "Demands",

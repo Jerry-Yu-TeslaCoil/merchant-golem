@@ -75,7 +75,7 @@ public class SoldierMenu extends AbstractContainerMenu {
 	}
 
 	public static SoldierMenu client(int containerId, Inventory inventory, SoldierScreenData data) {
-		SimpleContainerData sync = new SimpleContainerData(3);
+		SimpleContainerData sync = new SimpleContainerData(5);
 		sync.set(0, data.order());
 		sync.set(1, data.weapon());
 		sync.set(2, data.ride());
@@ -128,6 +128,8 @@ public class SoldierMenu extends AbstractContainerMenu {
 					case 0 -> chest.order().ordinal();
 					case 1 -> chest.weaponMode().ordinal();
 					case 2 -> chest.ride() ? 1 : 0;
+					case 3 -> soldier.getVillagerData().level();
+					case 4 -> soldier.getVillagerXp();
 					default -> 0;
 				};
 			}
@@ -138,7 +140,7 @@ public class SoldierMenu extends AbstractContainerMenu {
 
 			@Override
 			public int getCount() {
-				return 3;
+				return 5;
 			}
 		};
 		return new SoldierMenu(containerId, inventory, soldier.getInventory(), new EquipmentContainer(soldier), sync, soldier, chest, lordName);
@@ -158,6 +160,15 @@ public class SoldierMenu extends AbstractContainerMenu {
 
 	public boolean ride() {
 		return this.data.get(2) != 0;
+	}
+
+	public int rank() {
+		int rank = this.data.get(3);
+		return rank < 1 ? 1 : rank;
+	}
+
+	public int xp() {
+		return Math.max(0, this.data.get(4));
 	}
 
 	public void setDemands(String demands) {
