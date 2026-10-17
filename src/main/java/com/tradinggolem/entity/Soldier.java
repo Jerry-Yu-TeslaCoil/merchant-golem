@@ -8,6 +8,7 @@ import com.tradinggolem.villager.ModVillagers;
 import com.tradinggolem.villager.VillagerFoodAccess;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
+import net.minecraft.core.Holder;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
@@ -18,11 +19,18 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.ConversionParams;
+import net.minecraft.core.particles.ParticleTypes;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.entity.ai.attributes.Attribute;
+import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.item.ItemEntity;
@@ -40,6 +48,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.storage.ValueInput;
 import net.minecraft.world.level.storage.ValueOutput;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.HashMap;
@@ -52,6 +61,11 @@ public class Soldier extends Villager implements net.minecraft.world.entity.Cont
 	private static final Map<GlobalPos, UUID> BY_CHEST = new HashMap<>();
 	/** Same base speed as a wolf. */
 	private static final double WALK_SPEED = 0.3;
+	/** One monster kill. Vanilla steps are 10, 70, 150, then 250 for master. */
+	private static final int KILL_XP = 2;
+	private static final Identifier RANK_DAMAGE = TradingGolemMod.id("soldier_rank");
+	private static final Identifier RANK_HEALTH = TradingGolemMod.id("soldier_rank_health");
+	private int appliedRank = -1;
 
 	@Nullable
 	private BlockPos chestPos;
@@ -77,6 +91,14 @@ public class Soldier extends Villager implements net.minecraft.world.entity.Cont
 		this.offers = new MerchantOffers();
 		this.setPersistenceRequired();
 		this.applyWalkSpeed();
+	}
+
+	/**
+	 * A villager's vehicle point is at the feet. The player mesh sits from the hips, the same point a player uses.
+	 */
+	@Override
+	public Vec3 getVehicleAttachmentPoint(Entity vehicle) {
+		return new Vec3(0.0, 0.6, 0.0);
 	}
 
 	public static AttributeSupplier.Builder createAttributes() {
@@ -120,6 +142,77 @@ public class Soldier extends Villager implements net.minecraft.world.entity.Cont
 			this.alertHold--;
 		}
 		this.eat();
+		this.refreshRankBonuses();
+	}
+
+	/** A killed monster pays a little villager XP. Crossing the vanilla step promotes the profession. */
+	public void grantKillXp(ServerLevel level) {
+		int rank = this.getVillagerData().level();
+		if (!VillagerData.canLevelUp(rank)) {
+			return;
+		}
+		this.setVillagerXp(this.getVillagerXp() + KILL_XP);
+		if (this.getVillagerXp() < VillagerData.getMaxXpPerLevel(rank)) {
+			return;
+		}
+		int next = rank + 1;
+		this.setVillagerData(this.getVillagerData().withLevel(next));
+		this.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 200, 0));
+		this.playSound(SoundEvents.VILLAGER_YES, 1.0F, 1.0F);
+		level.sendParticles(ParticleTypes.HAPPY_VILLAGER, this.getX(), this.getY() + 1.5, this.getZ(), 8, 0.4, 0.5, 0.4, 0.0);
+		this.refreshRankBonuses();
+	}
+
+	/** Each rank above novice adds one point of attack damage. */
+	public float damageBonus() {
+		return this.ranksAboveNovice();
+	}
+
+	/** One heart per rank above novice. */
+	public float healthBonus() {
+		return this.ranksAboveNovice() * 2.0F;
+	}
+
+	/** One tick faster per rank. Master still swings close to once a second. */
+	public int attackInterval() {
+		return 20 - this.ranksAboveNovice();
+	}
+
+	private int ranksAboveNovice() {
+		return Math.max(0, this.getVillagerData().level() - 1);
+	}
+
+	/** Full spread at novice, tighter at each rank, and still present at master. */
+	public float bowSpread() {
+		int rank = Math.clamp(this.getVillagerData().level(), VillagerData.MIN_VILLAGER_LEVEL, VillagerData.MAX_VILLAGER_LEVEL);
+		return 1.0F - (rank - 1) * 0.15F;
+	}
+
+	private void refreshRankBonuses() {
+		int rank = this.getVillagerData().level();
+		if (rank == this.appliedRank) {
+			return;
+		}
+		this.appliedRank = rank;
+		this.applyBonus(Attributes.ATTACK_DAMAGE, RANK_DAMAGE, this.damageBonus());
+		float before = this.getMaxHealth();
+		this.applyBonus(Attributes.MAX_HEALTH, RANK_HEALTH, this.healthBonus());
+		float gained = this.getMaxHealth() - before;
+		if (gained > 0.0F) {
+			this.setHealth(this.getHealth() + gained);
+		}
+	}
+
+	private void applyBonus(Holder<Attribute> attribute, Identifier id, double amount) {
+		var instance = this.getAttribute(attribute);
+		if (instance == null) {
+			return;
+		}
+		if (amount <= 0.0) {
+			instance.removeModifier(id);
+			return;
+		}
+		instance.addOrUpdateTransientModifier(new AttributeModifier(id, amount, AttributeModifier.Operation.ADD_VALUE));
 	}
 
 	@Override
